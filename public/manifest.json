@@ -1,0 +1,10 @@
+{
+  "name": "Silent Zenith Compounding OS",
+  "short_name": "Silent Zenith",
+  "description": "Precision Compounding & Risk Execution Operating System",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090B",
+  "theme_color": "#10B981",
+  "orientation": "portrait-primary"
+}

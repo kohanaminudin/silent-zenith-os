@@ -28,3 +28,40 @@ body {
 @import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* Cross-Device Mobile Optimization (iOS Safari, Android Chrome, iPadOS) */
+@layer base {
+  html,
+  body {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior-y: none;
+  }
+
+  /* Mencegah iOS Safari melakukan auto-zoom saat mengetik angka/email */
+  @media screen and (max-width: 768px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
+}
+
+/* Safe-Area Insets untuk iPhone Dynamic Island/Notch & Home Indicator */
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.safe-bottom {
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+}
+
+/* Sembunyikan scrollbar horizontal pada tab navigasi mobile namun tetap bisa digeser */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

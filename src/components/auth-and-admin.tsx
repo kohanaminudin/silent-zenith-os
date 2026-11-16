@@ -109,8 +109,15 @@ export function AuthScreen({
         if (error) throw error;
         onSuccess();
       }
-    } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : "Terjadi kesalahan autentikasi.");
+    }} catch (err: unknown) {
+      const rawMsg = err instanceof Error ? err.message : "";
+      if (rawMsg.toLowerCase().includes("rate limit")) {
+        setErrorMsg(
+          "Batas pengiriman email sementara tercapai (maks. 2x/jam pada server default). Silakan tunggu beberapa menit sebelum mencoba lagi."
+        );
+      } else {
+        setErrorMsg(rawMsg || "Terjadi kesalahan autentikasi.");
+      }
     } finally {
       setLoading(false);
     }
