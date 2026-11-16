@@ -109,7 +109,7 @@ export function AuthScreen({
         if (error) throw error;
         onSuccess();
       }
-    }} catch (err: unknown) {
+    } catch (err: unknown) {
       const rawMsg = err instanceof Error ? err.message : "";
       if (rawMsg.toLowerCase().includes("rate limit")) {
         setErrorMsg(
