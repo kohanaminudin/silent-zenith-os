@@ -1,3 +1,99 @@
+"use client";
+
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
+import { ComputedJournalRow, RoadmapRow } from "@/types/compounding";
+
+/**
+ * Format angka mata uang USD secara ringkas dan presisi
+ */
+export function formatCompactUSD(value: number): string {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1_000_000_000) return `${sign}$${(abs / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 100_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
+  return `${sign}$${abs.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/**
+ * Logo Identitas Visual Silent Zenith OS
+ */
+export function ZenithLogo({ className = "w-9 h-9" }: { className?: string }) {
+  return (
+    <div
+      className={`relative inline-flex items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500/20 via-sky-500/15 to-zinc-900 border border-emerald-500/30 shadow-inner ${className}`}
+    >
+      <svg
+        viewBox="0 0 32 32"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        className="w-5 h-5"
+      >
+        <path
+          d="M5 23L12.5 15.5L17.5 19.5L27 9"
+          stroke="url(#zenithLogoGrad)"
+          strokeWidth="2.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="27" cy="9" r="2.5" fill="#10B981" />
+        <defs>
+          <linearGradient id="zenithLogoGrad" x1="5" y1="23" x2="27" y2="9" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#38BDF8" />
+            <stop offset="1" stopColor="#10B981" />
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
+  );
+}
+
+/**
+ * Angka Mata Uang dengan Transisi Halus saat Nilai Berubah
+ */
+export function AnimatedCurrency({ value }: { value: number }) {
+  const [displayValue, setDisplayValue] = useState<number>(value);
+  const prevRef = useRef<number>(value);
+
+  useEffect(() => {
+    const start = prevRef.current;
+    const end = value;
+    if (Math.abs(end - start) < 0.001) {
+      setDisplayValue(end);
+      return;
+    }
+
+    const duration = 420;
+    const startTime = performance.now();
+    let frameId: number;
+
+    const tick = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplayValue(start + (end - start) * eased);
+
+      if (progress < 1) {
+        frameId = requestAnimationFrame(tick);
+      } else {
+        prevRef.current = end;
+      }
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, [value]);
+
+  return <span>{formatCompactUSD(displayValue)}</span>;
+}
+
+/**
+ * Grafik Kurva Pertumbuhan Berbasis Tanggal Kalender & Jadwal Pasar
+ */
 export function CompoundingTrajectoryChart({
   roadmap,
   journals,
