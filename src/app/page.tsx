@@ -555,6 +555,9 @@ export default function CompoundingDashboardPage() {
   const isSuperAdmin = profile.role === "super_admin";
   const isModerator = profile.role === "moderator";
   const hasStaffPanelAccess = isOwner || isSuperAdmin || isModerator;
+  const visibleUsersCount = isOwner
+    ? allUsers.length
+    : allUsers.filter((u) => u.role !== "owner").length;
   const activeMarketInfo = MARKET_OPTIONS.find((m) => m.id === config.marketType)!;
 
   return (
@@ -659,7 +662,7 @@ export default function CompoundingDashboardPage() {
                     <Crown className="w-3.5 h-3.5" />
                   )}
                   <span>
-                    {isModerator ? "Moderator Panel" : "Admin Panel"} ({allUsers.length})
+                    {isModerator ? "Moderator Panel" : "Admin Panel"} ({visibleUsersCount})
                   </span>
                 </button>
               </div>
@@ -753,7 +756,7 @@ export default function CompoundingDashboardPage() {
                     <Crown className="w-3.5 h-3.5" />
                   )}
                   <span>
-                    {isModerator ? "Moderator Panel" : "Admin Panel"} ({allUsers.length})
+                    {isModerator ? "Moderator Panel" : "Admin Panel"} ({visibleUsersCount})
                   </span>
                 </button>
               </div>
