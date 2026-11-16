@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Crown,
   Users,
@@ -15,6 +15,9 @@ import {
   User as UserIcon,
   ArrowRight,
   Loader2,
+  KeyRound,
+  X,
+  ArrowLeft,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { ZenithLogo, formatCompactUSD } from "./brand-and-chart";
@@ -36,12 +39,21 @@ export interface UserProfileRecord {
 }
 
 /**
- * 1. Halaman Login & Pendaftaran Akun Baru
+ * 1. Halaman Login, Register, Lupa Password & Reset Password Baru
  */
-export function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
-  const [mode, setMode] = useState<"login" | "register">("login");
+export function AuthScreen({
+  onSuccess,
+  initialRecoveryMode = false,
+}: {
+  onSuccess: () => void;
+  initialRecoveryMode?: boolean;
+}) {
+  const [mode, setMode] = useState<"login" | "register" | "forgot" | "update_password">(
+    initialRecoveryMode ? "update_password" : "login"
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -54,10 +66,10 @@ export function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
     setInfoMsg(null);
 
     try {
-      if (mode === "register") {
-        const redirectUrl =
-          typeof window !== "undefined" ? `${window.location.origin}/` : undefined;
+      const redirectUrl =
+        typeof window !== "undefined" ? `${window.location.origin}/` : undefined;
 
+      if (mode === "register") {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -70,9 +82,32 @@ export function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
         if (data.session) {
           onSuccess();
         } else {
-          setInfoMsg("Akun berhasil dibuat! Silakan cek kotak masuk email kamu untuk konfirmasi.");
+          setInfoMsg("Akun berhasil dibuat! Cek inbox email kamu untuk link verifikasi.");
           setMode("login");
         }
+      } else if (mode === "forgot") {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: redirectUrl,
+        });
+        if (error) throw error;
+        setInfoMsg(
+          "Link pemulihan password telah dikirim ke email kamu. Klik link tersebut untuk membuat password baru."
+        );
+      } else if (mode === "update_password") {
+        if (password !== confirmPassword) {
+          throw new Error("Konfirmasi password tidak cocok.");
+        }
+        const { error } = await supabase.auth.updateUser({ password });
+        if (error) throw error;
+        setInfoMsg("Password berhasil diperbarui! Mengalihkan ke dashboard...");
+        setTimeout(() => onSuccess(), 1000);
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (error) throw error;
+        onSuccess();
       }
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : "Terjadi kesalahan autentikasi.");
@@ -95,34 +130,44 @@ export function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
           <div>
             <h1 className="text-lg font-bold tracking-tight uppercase">Silent Zenith OS</h1>
             <p className="text-xs text-zinc-400 mt-1">
-              {mode === "login"
-                ? "Masuk ke workspace compounding pribadi Anda"
-                : "Buat akun baru untuk memulai misi $1 Miliar"}
+              {mode === "login" && "Masuk ke workspace compounding pribadi Anda"}
+              {mode === "register" && "Buat akun baru untuk memulai misi $1 Miliar"}
+              {mode === "forgot" && "Masukkan email terdaftar untuk menerima link reset password"}
+              {mode === "update_password" && "Buat password baru untuk mengamankan akun Anda"}
             </p>
           </div>
         </div>
 
-        {/* Switcher Login / Daftar */}
-        <div className="grid grid-cols-2 p-1 rounded-xl bg-zinc-950 border border-zinc-800">
-          <button
-            type="button"
-            onClick={() => setMode("login")}
-            className={`py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-              mode === "login" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            Masuk (Login)
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("register")}
-            className={`py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-              mode === "register" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            Daftar Akun Baru
-          </button>
-        </div>
+        {(mode === "login" || mode === "register") && (
+          <div className="grid grid-cols-2 p-1 rounded-xl bg-zinc-950 border border-zinc-800">
+            <button
+              type="button"
+              onClick={() => {
+                setMode("login");
+                setErrorMsg(null);
+                setInfoMsg(null);
+              }}
+              className={`py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                mode === "login" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              Masuk (Login)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("register");
+                setErrorMsg(null);
+                setInfoMsg(null);
+              }}
+              className={`py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                mode === "register" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              Daftar Akun Baru
+            </button>
+          </div>
+        )}
 
         {errorMsg && (
           <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
@@ -153,36 +198,75 @@ export function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
             </div>
           )}
 
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1.5">Email</label>
-            <div className="relative">
-              <Mail className="w-4 h-4 text-zinc-500 absolute left-3.5 top-2.5" />
-              <input
-                type="email"
-                required
-                placeholder="nama@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-10 pr-3 py-2 text-sm rounded-xl bg-zinc-950 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-              />
+          {(mode === "login" || mode === "register" || mode === "forgot") && (
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1.5">Email</label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-zinc-500 absolute left-3.5 top-2.5" />
+                <input
+                  type="email"
+                  required
+                  placeholder="nama@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full pl-10 pr-3 py-2 text-sm rounded-xl bg-zinc-950 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                />
+              </div>
             </div>
-          </div>
+          )}
 
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1.5">Password (Min. 6 karakter)</label>
-            <div className="relative">
-              <Lock className="w-4 h-4 text-zinc-500 absolute left-3.5 top-2.5" />
-              <input
-                type="password"
-                required
-                minLength={6}
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-3 py-2 text-sm rounded-xl bg-zinc-950 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-              />
+          {(mode === "login" || mode === "register" || mode === "update_password") && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs text-zinc-400">
+                  {mode === "update_password" ? "Password Baru (Min. 6 karakter)" : "Password"}
+                </label>
+                {mode === "login" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("forgot");
+                      setErrorMsg(null);
+                      setInfoMsg(null);
+                    }}
+                    className="text-xs text-emerald-400 hover:underline cursor-pointer"
+                  >
+                    Lupa password?
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-zinc-500 absolute left-3.5 top-2.5" />
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-10 pr-3 py-2 text-sm rounded-xl bg-zinc-950 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                />
+              </div>
             </div>
-          </div>
+          )}
+
+          {mode === "update_password" && (
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1.5">Ulangi Password Baru</label>
+              <div className="relative">
+                <KeyRound className="w-4 h-4 text-zinc-500 absolute left-3.5 top-2.5" />
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  placeholder="••••••••"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full pl-10 pr-3 py-2 text-sm rounded-xl bg-zinc-950 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                />
+              </div>
+            </div>
+          )}
 
           <button
             type="submit"
@@ -193,11 +277,28 @@ export function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <>
-                {mode === "login" ? "Masuk ke Dashboard" : "Daftar Sekarang"}
+                {mode === "login" && "Masuk ke Dashboard"}
+                {mode === "register" && "Daftar Sekarang"}
+                {mode === "forgot" && "Kirim Link Reset Password"}
+                {mode === "update_password" && "Simpan Password Baru"}
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>
+
+          {mode === "forgot" && (
+            <button
+              type="button"
+              onClick={() => {
+                setMode("login");
+                setErrorMsg(null);
+                setInfoMsg(null);
+              }}
+              className="w-full py-2 text-xs text-zinc-400 hover:text-zinc-200 inline-flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" /> Kembali ke halaman Login
+            </button>
+          )}
         </form>
       </motion.div>
     </div>
@@ -205,7 +306,175 @@ export function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
 }
 
 /**
- * 2. Panel Eksklusif Super Admin (Admin Tertinggi)
+ * 2. Modal Pengaturan Akun & Ganti Password (Settings Modal)
+ */
+export function AccountSettingsModal({
+  isOpen,
+  onClose,
+  profile,
+  onProfileUpdated,
+  onNotify,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  profile: UserProfileRecord;
+  onProfileUpdated: (newName: string) => void;
+  onNotify: (msg: string) => void;
+}) {
+  const [fullName, setFullName] = useState(profile.full_name || "");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setErr(null);
+
+    try {
+      // 1. Update nama profil jika berubah
+      if (fullName.trim() && fullName !== profile.full_name) {
+        const { error: profErr } = await supabase
+          .from("user_profiles")
+          .update({ full_name: fullName.trim() })
+          .eq("id", profile.id);
+        if (profErr) throw profErr;
+        onProfileUpdated(fullName.trim());
+      }
+
+      // 2. Update password jika diisi
+      if (newPassword) {
+        if (newPassword.length < 6) {
+          throw new Error("Password baru minimal 6 karakter.");
+        }
+        if (newPassword !== confirmNewPassword) {
+          throw new Error("Konfirmasi password baru tidak sama.");
+        }
+        const { error: pwErr } = await supabase.auth.updateUser({
+          password: newPassword,
+        });
+        if (pwErr) throw pwErr;
+      }
+
+      setNewPassword("");
+      setConfirmNewPassword("");
+      onNotify("Pengaturan akun & password berhasil diperbarui!");
+      onClose();
+    } catch (error: unknown) {
+      setErr(error instanceof Error ? error.message : "Gagal menyimpan pengaturan.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 12 }}
+            className="w-full max-w-md rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-6 shadow-2xl space-y-5"
+          >
+            <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-emerald-500" />
+                <h3 className="text-sm font-bold">Pengaturan Akun & Keamanan</h3>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {err && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
+                {err}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveSettings} className="space-y-4">
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">Email Akun</label>
+                <input
+                  type="text"
+                  disabled
+                  value={profile.email}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/60 text-zinc-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">Nama Tampilan</label>
+                <input
+                  type="text"
+                  required
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                />
+              </div>
+
+              <div className="pt-2 border-t border-zinc-200/80 dark:border-zinc-800/80 space-y-3">
+                <p className="text-xs font-semibold text-zinc-400">
+                  Ganti Password (Kosongkan jika tidak ingin mengubah)
+                </p>
+                <div>
+                  <label className="block text-xs text-zinc-500 mb-1">Password Baru</label>
+                  <input
+                    type="password"
+                    minLength={6}
+                    placeholder="Minimal 6 karakter"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-500 mb-1">Konfirmasi Password Baru</label>
+                  <input
+                    type="password"
+                    minLength={6}
+                    placeholder="Ulangi password baru"
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 rounded-xl border border-zinc-200 dark:border-zinc-800 text-xs font-medium cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  Simpan Perubahan
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/**
+ * 3. Panel Eksklusif Super Admin
  */
 interface SuperAdminPanelProps {
   allUsers: UserProfileRecord[];
@@ -270,7 +539,6 @@ export function SuperAdminPanel({
 
   return (
     <div className="space-y-6">
-      {/* Header Command Center */}
       <div className="p-6 rounded-2xl bg-gradient-to-r from-amber-500/10 via-emerald-500/10 to-zinc-900 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
@@ -303,7 +571,6 @@ export function SuperAdminPanel({
         </div>
       </div>
 
-      {/* Global Broadcast System */}
       <form
         onSubmit={handleSendBroadcast}
         className="p-6 rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 space-y-3"
@@ -315,7 +582,7 @@ export function SuperAdminPanel({
         <div className="flex flex-col sm:flex-row gap-3">
           <input
             type="text"
-            placeholder="Tulis pengumuman, catatan disiplin risk, atau update sistem (kosongkan untuk menyembunyikan banner)..."
+            placeholder="Tulis pengumuman, catatan disiplin risk, atau update sistem..."
             value={broadcastText}
             onChange={(e) => setBroadcastText(e.target.value)}
             className="flex-1 px-3.5 py-2 text-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 focus:outline-none focus:ring-2 focus:ring-amber-500/40"
@@ -330,7 +597,6 @@ export function SuperAdminPanel({
         </div>
       </form>
 
-      {/* Tabel Manajemen Seluruh Pengguna */}
       <div className="rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 overflow-hidden">
         <div className="px-6 py-4 border-b border-zinc-200/80 dark:border-zinc-800/80 flex items-center justify-between">
           <div className="flex items-center gap-2">

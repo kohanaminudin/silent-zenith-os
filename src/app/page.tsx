@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion";
 import * as XLSX from "xlsx";
 import {
-  ShieldCheck,
   AlertTriangle,
   TrendingUp,
   Target,
@@ -24,6 +23,10 @@ import {
   LayoutDashboard,
   Megaphone,
   Loader2,
+  Settings,
+  ShieldAlert,
+  Wrench,
+  RefreshCw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -42,6 +45,7 @@ import {
   formatCompactUSD,
 } from "@/components/brand-and-chart";
 import {
+  AccountSettingsModal,
   AuthScreen,
   SuperAdminPanel,
   UserProfileRecord,
@@ -64,9 +68,11 @@ const TARGET_PRESETS = [
 
 export default function CompoundingDashboardPage() {
   const [authLoading, setAuthLoading] = useState(true);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserProfileRecord | null>(null);
   const [activeView, setActiveView] = useState<"workspace" | "admin">("workspace");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [config, setConfig] = useState<CompoundingConfig>(DEFAULT_CONFIG);
   const [journals, setJournals] = useState<JournalEntryInput[]>([]);
@@ -76,17 +82,15 @@ export default function CompoundingDashboardPage() {
   const [roadmapFilter, setRoadmapFilter] = useState<"ALL" | "PASSED" | "ACTIVE">("ALL");
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  // State khusus Super Admin & Global Broadcast
   const [allUsers, setAllUsers] = useState<UserProfileRecord[]>([]);
   const [announcement, setAnnouncement] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const triggerToast = (msg: string) => {
     setToastMsg(msg);
-    setTimeout(() => setToastMsg(null), 3200);
+    setTimeout(() => setToastMsg(null), 3500);
   };
 
-  // Muat seluruh data pengguna untuk Super Admin
   const loadAdminDirectory = useCallback(async () => {
     const { data: profilesData } = await supabase
       .from("user_profiles")
@@ -111,7 +115,6 @@ export default function CompoundingDashboardPage() {
     }
   }, []);
 
-  // Muat sesi user, profil, jurnal, dan pengumuman dari Supabase
   const bootstrapSession = useCallback(async () => {
     setAuthLoading(true);
     const {
@@ -186,8 +189,13 @@ export default function CompoundingDashboardPage() {
 
     bootstrapSession();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(() => {
-      bootstrapSession();
+    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setIsPasswordRecovery(true);
+        setAuthLoading(false);
+      } else {
+        bootstrapSession();
+      }
     });
     return () => authListener.subscription.unsubscribe();
   }, [bootstrapSession]);
@@ -196,7 +204,6 @@ export default function CompoundingDashboardPage() {
     localStorage.setItem("nexus_compounding_theme", darkMode ? "dark" : "light");
   }, [darkMode]);
 
-  // Simpan perubahan parameter konfigurasi ke Supabase
   const syncConfigToCloud = async (nextConfig: CompoundingConfig) => {
     setConfig(nextConfig);
     if (!userId) return;
@@ -231,6 +238,33 @@ export default function CompoundingDashboardPage() {
     () => computeDashboardMetrics(config, roadmap, computedJournals),
     [config, roadmap, computedJournals]
   );
+
+  // Kalkulasi Drawdown & Solusi Pemulihan saat Saldo < Modal Awal
+  const drawdownAnalysis = useMemo(() => {
+    const isUnderInitial = metrics.currentBalance < config.initialCapital;
+    if (!isUnderInitial) return null;
+
+    const deficitAmount = config.initialCapital - metrics.currentBalance;
+    const drawdownPct = (deficitAmount / config.initialCapital) * 100;
+    const safeBalance = Math.max(0.01, metrics.currentBalance);
+    const recoveryGainNeededPct = ((config.initialCapital - safeBalance) / safeBalance) * 100;
+    const sessionsToRecoverAtTarget =
+      config.dailyTargetPct > 0
+        ? Math.ceil(
+            Math.log(config.initialCapital / safeBalance) /
+              Math.log(1 + config.dailyTargetPct)
+          )
+        : 0;
+    const defensiveRiskPct = Number((config.riskPerDayPct * 0.5).toFixed(4));
+
+    return {
+      deficitAmount,
+      drawdownPct,
+      recoveryGainNeededPct,
+      sessionsToRecoverAtTarget,
+      defensiveRiskPct,
+    };
+  }, [metrics.currentBalance, config.initialCapital, config.dailyTargetPct, config.riskPerDayPct]);
 
   const filteredRoadmap = useMemo(() => {
     if (roadmapFilter === "PASSED") {
@@ -269,6 +303,7 @@ export default function CompoundingDashboardPage() {
       return;
     }
 
+    const projectedBalance = metrics.currentBalance + parsed;
     setJournals((prev) => [
       ...prev,
       {
@@ -279,9 +314,16 @@ export default function CompoundingDashboardPage() {
       },
     ]);
     setNewPnl("");
-    triggerToast(
-      `Sesi #${nextSession} (${parsed >= 0 ? `+$${parsed}` : `-$${Math.abs(parsed)}`}) tersimpan di cloud!`
-    );
+
+    if (projectedBalance < config.initialCapital) {
+      triggerToast(
+        `PERINGATAN DRAWDOWN: Saldo turun ke ${formatCompactUSD(projectedBalance)} (di bawah modal awal)!`
+      );
+    } else {
+      triggerToast(
+        `Sesi #${nextSession} (${parsed >= 0 ? `+$${parsed}` : `-$${Math.abs(parsed)}`}) tersimpan!`
+      );
+    }
     if (profile?.role === "super_admin") loadAdminDirectory();
   };
 
@@ -294,6 +336,35 @@ export default function CompoundingDashboardPage() {
     setJournals(updated);
     triggerToast("Sesi dihapus dari cloud.");
     if (profile?.role === "super_admin") loadAdminDirectory();
+  };
+
+  // Solusi 1: Terapkan Mode Risk Defensif (Potong Risk 50%)
+  const handleApplyDefensiveRisk = async () => {
+    if (!drawdownAnalysis) return;
+    await syncConfigToCloud({
+      ...config,
+      riskPerDayPct: Math.max(0.005, drawdownAnalysis.defensiveRiskPct),
+    });
+    triggerToast(
+      `Mode Defensif aktif! Batas risk diturunkan menjadi ${(
+        Math.max(0.005, drawdownAnalysis.defensiveRiskPct) * 100
+      ).toFixed(2)}% per hari.`
+    );
+  };
+
+  // Solusi 2: Reset Basis Modal ke Saldo Terkini (Mulai Siklus Baru dari Saldo Aktual)
+  const handleRebaseCapitalToCurrent = async () => {
+    if (!userId || metrics.currentBalance <= 0) return;
+    await supabase.from("daily_journals").delete().eq("user_id", userId);
+    setJournals([]);
+    await syncConfigToCloud({
+      ...config,
+      initialCapital: Number(metrics.currentBalance.toFixed(2)),
+      selectedDay: 1,
+    });
+    triggerToast(
+      `Basis modal diperbarui ke ${formatCompactUSD(metrics.currentBalance)}. Siklus baru dimulai dari Day 1!`
+    );
   };
 
   const handlePostAnnouncement = async (msg: string) => {
@@ -314,6 +385,7 @@ export default function CompoundingDashboardPage() {
     await supabase.auth.signOut();
     setUserId(null);
     setProfile(null);
+    setIsPasswordRecovery(false);
   };
 
   const handleExportExcel = () => {
@@ -400,6 +472,18 @@ export default function CompoundingDashboardPage() {
     );
   }
 
+  if (isPasswordRecovery) {
+    return (
+      <AuthScreen
+        initialRecoveryMode
+        onSuccess={() => {
+          setIsPasswordRecovery(false);
+          bootstrapSession();
+        }}
+      />
+    );
+  }
+
   if (!userId || !profile) {
     return <AuthScreen onSuccess={bootstrapSession} />;
   }
@@ -436,6 +520,15 @@ export default function CompoundingDashboardPage() {
             <span>{announcement}</span>
           </div>
         )}
+
+        {/* Modal Pengaturan & Ganti Password */}
+        <AccountSettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          profile={profile}
+          onProfileUpdated={(newName) => setProfile({ ...profile, full_name: newName })}
+          onNotify={triggerToast}
+        />
 
         {/* Toast Notification */}
         <AnimatePresence>
@@ -479,7 +572,6 @@ export default function CompoundingDashboardPage() {
               </div>
             </div>
 
-            {/* Switcher Workspace vs Super Admin Command Center */}
             {isSuperAdmin && (
               <div className="inline-flex p-1 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800">
                 <button
@@ -521,7 +613,7 @@ export default function CompoundingDashboardPage() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 title="Import Excel"
-                className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 cursor-pointer"
               >
                 <Upload className="w-4 h-4" />
               </button>
@@ -529,7 +621,7 @@ export default function CompoundingDashboardPage() {
                 type="button"
                 onClick={handleExportExcel}
                 title="Export Excel"
-                className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 cursor-pointer"
               >
                 <Download className="w-4 h-4" />
               </button>
@@ -537,9 +629,18 @@ export default function CompoundingDashboardPage() {
                 type="button"
                 onClick={() => setDarkMode((prev) => !prev)}
                 aria-label="Ganti Tema"
+                title="Ganti Tema"
                 className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 cursor-pointer"
               >
                 {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSettingsOpen(true)}
+                title="Pengaturan Akun & Ganti Password"
+                className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 cursor-pointer"
+              >
+                <Settings className="w-4 h-4" />
               </button>
               <button
                 type="button"
@@ -564,19 +665,105 @@ export default function CompoundingDashboardPage() {
             />
           ) : (
             <>
+              {/* DRAWDOWN ALERT & RECOVERY PROTOCOL BANNER (Muncul otomatis jika Saldo < Modal Awal) */}
+              <AnimatePresence>
+                {drawdownAnalysis && (
+                  <motion.section
+                    initial={{ opacity: 0, y: -14, scale: 0.99 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -14 }}
+                    className="p-6 rounded-2xl bg-rose-500/[0.08] border border-rose-500/40 shadow-lg shadow-rose-500/5 space-y-4"
+                  >
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      <div className="flex items-start gap-3.5">
+                        <div className="p-2.5 rounded-xl bg-rose-500/20 text-rose-500 shrink-0 mt-0.5">
+                          <ShieldAlert className="w-6 h-6 animate-pulse" />
+                        </div>
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h2 className="text-sm font-bold text-rose-500 uppercase tracking-wide">
+                              Peringatan Drawdown — Saldo Di Bawah Modal Awal!
+                            </h2>
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-400 tabular-nums">
+                              Defisit -{formatCompactUSD(drawdownAnalysis.deficitAmount)} (-
+                              {drawdownAnalysis.drawdownPct.toFixed(2)}%)
+                            </span>
+                          </div>
+                          <p className="text-xs text-zinc-600 dark:text-zinc-300 mt-1 leading-relaxed">
+                            Saldo aktual kamu saat ini{" "}
+                            <strong className="text-rose-500">
+                              {formatCompactUSD(metrics.currentBalance)}
+                            </strong>{" "}
+                            (di bawah basis modal{" "}
+                            <strong>{formatCompactUSD(config.initialCapital)}</strong>). Untuk kembali
+                            impas (BEP), akun membutuhkan pertumbuhan bersih sebesar{" "}
+                            <strong className="text-amber-500">
+                              +{drawdownAnalysis.recoveryGainNeededPct.toFixed(2)}%
+                            </strong>{" "}
+                            atau sekitar{" "}
+                            <strong>
+                              {drawdownAnalysis.sessionsToRecoverAtTarget} sesi profit konsisten
+                            </strong>{" "}
+                            pada target {(config.dailyTargetPct * 100).toFixed(1)}%/hari.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Tombol Aksi Solusi Cepat */}
+                      <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={handleApplyDefensiveRisk}
+                          className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                        >
+                          <Wrench className="w-3.5 h-3.5" />
+                          Pangkas Risk 50% ({(drawdownAnalysis.defensiveRiskPct * 100).toFixed(2)}%)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRebaseCapitalToCurrent}
+                          className="px-3.5 py-2 rounded-xl bg-zinc-900 dark:bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold border border-zinc-700 inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          Reset Modal ke {formatCompactUSD(metrics.currentBalance)}
+                        </button>
+                      </div>
+                    </div>
+                  </motion.section>
+                )}
+              </AnimatePresence>
+
               {/* Bento KPI Grid */}
               <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="p-5 rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 shadow-xs">
+                <div
+                  className={`p-5 rounded-2xl bg-white dark:bg-zinc-900/90 border shadow-xs transition-colors ${
+                    drawdownAnalysis
+                      ? "border-rose-500/50 ring-1 ring-rose-500/20"
+                      : "border-zinc-200/80 dark:border-zinc-800/80"
+                  }`}
+                >
                   <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">
                     <span>Saldo Aktual Terkini</span>
-                    <TrendingUp className="w-4 h-4 text-emerald-500" />
+                    <TrendingUp
+                      className={`w-4 h-4 ${
+                        drawdownAnalysis ? "text-rose-500" : "text-emerald-500"
+                      }`}
+                    />
                   </div>
-                  <div className="mt-3 text-2xl font-bold tracking-tight tabular-nums">
+                  <div
+                    className={`mt-3 text-2xl font-bold tracking-tight tabular-nums ${
+                      drawdownAnalysis ? "text-rose-500" : ""
+                    }`}
+                  >
                     <AnimatedCurrency value={metrics.currentBalance} />
                   </div>
                   <p className="mt-1.5 text-xs text-zinc-500">
                     Buffer Aman:{" "}
-                    <span className="font-semibold text-emerald-500">
+                    <span
+                      className={`font-semibold ${
+                        metrics.safeBufferAmount >= 0 ? "text-emerald-500" : "text-rose-500"
+                      }`}
+                    >
                       {metrics.safeBufferAmount >= 0
                         ? `+${formatCompactUSD(metrics.safeBufferAmount)}`
                         : formatCompactUSD(metrics.safeBufferAmount)}
@@ -836,43 +1023,68 @@ export default function CompoundingDashboardPage() {
                         <th className="py-3 px-4 font-medium">Profit / Loss</th>
                         <th className="py-3 px-4 font-medium">Return</th>
                         <th className="py-3 px-4 font-medium">Saldo Akhir</th>
-                        <th className="py-3 px-4 font-medium">Status Day Aman</th>
+                        <th className="py-3 px-4 font-medium">Status Checkpoint</th>
                         <th className="py-3 px-4 font-medium text-right">Aksi</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200/60 dark:divide-zinc-800/60 tabular-nums">
-                      {computedJournals.map((row) => (
-                        <tr key={row.id} className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40">
-                          <td className="py-3 px-4 font-medium">#{row.sessionNumber}</td>
-                          <td className="py-3 px-4 text-zinc-500">{row.executionDate}</td>
-                          <td className="py-3 px-4">{formatCompactUSD(row.startBalance)}</td>
-                          <td className="py-3 px-4 text-amber-500">{formatCompactUSD(row.maxRiskAmount)}</td>
-                          <td className="py-3 px-4 text-sky-500">{formatCompactUSD(row.targetProfitAmount)}</td>
-                          <td
-                            className={`py-3 px-4 font-semibold ${
-                              row.pnlAmount >= 0 ? "text-emerald-500" : "text-rose-500"
+                      {computedJournals.map((row) => {
+                        const isDeficit = row.endBalance < config.initialCapital;
+                        return (
+                          <tr
+                            key={row.id}
+                            className={`transition-colors ${
+                              isDeficit
+                                ? "bg-rose-500/[0.04] hover:bg-rose-500/[0.08]"
+                                : "hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40"
                             }`}
                           >
-                            {row.pnlAmount >= 0
-                              ? `+${formatCompactUSD(row.pnlAmount)}`
-                              : formatCompactUSD(row.pnlAmount)}
-                          </td>
-                          <td className="py-3 px-4">{(row.dailyReturnPct * 100).toFixed(2)}%</td>
-                          <td className="py-3 px-4 font-semibold">{formatCompactUSD(row.endBalance)}</td>
-                          <td className="py-3 px-4 text-xs">
-                            Aman s/d Day {row.safeDayAchieved}
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteSession(row.id)}
-                              className="p-1.5 text-zinc-400 hover:text-rose-500 rounded-lg cursor-pointer"
+                            <td className="py-3 px-4 font-medium">#{row.sessionNumber}</td>
+                            <td className="py-3 px-4 text-zinc-500">{row.executionDate}</td>
+                            <td className="py-3 px-4">{formatCompactUSD(row.startBalance)}</td>
+                            <td className="py-3 px-4 text-amber-500">{formatCompactUSD(row.maxRiskAmount)}</td>
+                            <td className="py-3 px-4 text-sky-500">{formatCompactUSD(row.targetProfitAmount)}</td>
+                            <td
+                              className={`py-3 px-4 font-semibold ${
+                                row.pnlAmount >= 0 ? "text-emerald-500" : "text-rose-500"
+                              }`}
                             >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                              {row.pnlAmount >= 0
+                                ? `+${formatCompactUSD(row.pnlAmount)}`
+                                : formatCompactUSD(row.pnlAmount)}
+                            </td>
+                            <td className="py-3 px-4">{(row.dailyReturnPct * 100).toFixed(2)}%</td>
+                            <td
+                              className={`py-3 px-4 font-semibold ${
+                                isDeficit ? "text-rose-500" : ""
+                              }`}
+                            >
+                              {formatCompactUSD(row.endBalance)}
+                            </td>
+                            <td className="py-3 px-4 text-xs">
+                              {isDeficit ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-500 font-semibold">
+                                  <AlertTriangle className="w-3 h-3" />
+                                  Defisit -{formatCompactUSD(config.initialCapital - row.endBalance)}
+                                </span>
+                              ) : (
+                                <span className="text-emerald-500 font-medium">
+                                  Aman s/d Day {row.safeDayAchieved}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSession(row.id)}
+                                className="p-1.5 text-zinc-400 hover:text-rose-500 rounded-lg cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -923,30 +1135,39 @@ export default function CompoundingDashboardPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200/60 dark:divide-zinc-800/60 tabular-nums">
-                      {filteredRoadmap.map((r) => (
-                        <tr key={r.day} className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40">
-                          <td className="py-2.5 px-4 font-medium">Day {r.day}</td>
-                          <td className="py-2.5 px-4 text-xs text-zinc-500">{r.phase}</td>
-                          <td className="py-2.5 px-4">{formatCompactUSD(r.startBalance)}</td>
-                          <td className="py-2.5 px-4 text-emerald-500">
-                            +{formatCompactUSD(r.targetProfit)}
-                          </td>
-                          <td className="py-2.5 px-4 font-semibold">{formatCompactUSD(r.targetEndBalance)}</td>
-                          <td className="py-2.5 px-4">
-                            <span
-                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                r.status === "TERLAMPAUI (Aman)"
-                                  ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
-                                  : r.status === "SEDANG DIJALANI"
-                                  ? "bg-amber-500/10 text-amber-500 border border-amber-500/20"
-                                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500"
-                              }`}
-                            >
-                              {r.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredRoadmap.map((r) => {
+                        const isDay1Deficit = r.day === 1 && Boolean(drawdownAnalysis);
+                        return (
+                          <tr key={r.day} className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40">
+                            <td className="py-2.5 px-4 font-medium">Day {r.day}</td>
+                            <td className="py-2.5 px-4 text-xs text-zinc-500">{r.phase}</td>
+                            <td className="py-2.5 px-4">{formatCompactUSD(r.startBalance)}</td>
+                            <td className="py-2.5 px-4 text-emerald-500">
+                              +{formatCompactUSD(r.targetProfit)}
+                            </td>
+                            <td className="py-2.5 px-4 font-semibold">{formatCompactUSD(r.targetEndBalance)}</td>
+                            <td className="py-2.5 px-4">
+                              {isDay1Deficit ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/15 text-rose-500 border border-rose-500/30">
+                                  <AlertTriangle className="w-3 h-3" /> DEFISIT MODAL
+                                </span>
+                              ) : (
+                                <span
+                                  className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                    r.status === "TERLAMPAUI (Aman)"
+                                      ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                                      : r.status === "SEDANG DIJALANI"
+                                      ? "bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                                      : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500"
+                                  }`}
+                                >
+                                  {r.status}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
