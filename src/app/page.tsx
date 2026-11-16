@@ -24,6 +24,7 @@ import {
   Loader2,
   Settings,
   ShieldAlert,
+  ShieldCheck,
   Wrench,
   RefreshCw,
   Calendar,
@@ -151,18 +152,26 @@ export default function CompoundingDashboardPage() {
       .single();
 
     if (prof) {
-      setProfile(prof as UserProfileRecord);
+      const typedProf = prof as UserProfileRecord & {
+        start_date?: string;
+        market_type?: MarketType;
+      };
+      setProfile(typedProf);
       setConfig({
-        initialCapital: Number(prof.initial_capital),
-        targetCapital: Number(prof.target_capital),
-        dailyTargetPct: Number(prof.daily_target_pct),
-        riskPerDayPct: Number(prof.risk_per_day_pct),
-        selectedDay: Number(prof.selected_day),
-        startDate: prof.start_date || TODAY_YMD,
-        marketType: (prof.market_type as MarketType) || "forex",
+        initialCapital: Number(typedProf.initial_capital),
+        targetCapital: Number(typedProf.target_capital),
+        dailyTargetPct: Number(typedProf.daily_target_pct),
+        riskPerDayPct: Number(typedProf.risk_per_day_pct),
+        selectedDay: Number(typedProf.selected_day),
+        startDate: typedProf.start_date || TODAY_YMD,
+        marketType: typedProf.market_type || "forex",
       });
 
-      if (prof.role === "super_admin") {
+      if (
+        typedProf.role === "owner" ||
+        typedProf.role === "super_admin" ||
+        typedProf.role === "moderator"
+      ) {
         await loadAdminDirectory();
       }
     }
@@ -236,7 +245,6 @@ export default function CompoundingDashboardPage() {
       .eq("id", userId);
   };
 
-  // Hitung jurnal & agregasi per tanggal terlebih dahulu
   const { roadmap, computedJournals, dailySummaries, metrics } = useMemo(() => {
     const initialRoadmap = generateDynamicRoadmap(config, config.initialCapital, []);
     const computed = computeJournals(config, journals, initialRoadmap);
@@ -340,7 +348,14 @@ export default function CompoundingDashboardPage() {
         `Entry tanggal ${newDate} (${parsed >= 0 ? `+$${parsed}` : `-$${Math.abs(parsed)}`}) tersimpan!`
       );
     }
-    if (profile?.role === "super_admin") loadAdminDirectory();
+
+    if (
+      profile?.role === "owner" ||
+      profile?.role === "super_admin" ||
+      profile?.role === "moderator"
+    ) {
+      loadAdminDirectory();
+    }
   };
 
   const handleDeleteSession = async (id: string) => {
@@ -351,7 +366,14 @@ export default function CompoundingDashboardPage() {
       .map((item, idx) => ({ ...item, sessionNumber: idx + 1 }));
     setJournals(updated);
     triggerToast("Entry dihapus dari cloud.");
-    if (profile?.role === "super_admin") loadAdminDirectory();
+
+    if (
+      profile?.role === "owner" ||
+      profile?.role === "super_admin" ||
+      profile?.role === "moderator"
+    ) {
+      loadAdminDirectory();
+    }
   };
 
   const handleApplyDefensiveRisk = async () => {
@@ -393,7 +415,9 @@ export default function CompoundingDashboardPage() {
       });
     }
     setAnnouncement(msg.trim());
-    triggerToast(msg.trim() ? "Pengumuman global dipublikasikan!" : "Banner pengumuman disembunyikan.");
+    triggerToast(
+      msg.trim() ? "Pengumuman global dipublikasikan!" : "Banner pengumuman disembunyikan."
+    );
   };
 
   const handleLogout = async () => {
@@ -514,7 +538,7 @@ export default function CompoundingDashboardPage() {
           <AlertTriangle className="w-10 h-10 text-rose-500 mx-auto" />
           <h2 className="text-lg font-bold">Akun Dinonaktifkan Sementara</h2>
           <p className="text-xs text-zinc-400">
-            Akses akun Anda telah ditangguhkan oleh Super Admin. Hubungi administrator sistem untuk aktivasi ulang.
+            Akses akun Anda telah ditangguhkan oleh Administrator. Hubungi tim pengelola sistem untuk aktivasi ulang.
           </p>
           <button
             onClick={handleLogout}
@@ -527,7 +551,10 @@ export default function CompoundingDashboardPage() {
     );
   }
 
+  const isOwner = profile.role === "owner";
   const isSuperAdmin = profile.role === "super_admin";
+  const isModerator = profile.role === "moderator";
+  const hasStaffPanelAccess = isOwner || isSuperAdmin || isModerator;
   const activeMarketInfo = MARKET_OPTIONS.find((m) => m.id === config.marketType)!;
 
   return (
@@ -572,10 +599,17 @@ export default function CompoundingDashboardPage() {
                   <h1 className="text-xs sm:text-sm font-bold tracking-tight uppercase truncate">
                     Silent Zenith
                   </h1>
-                  {isSuperAdmin ? (
-                    <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold tracking-wider uppercase px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/30 shrink-0">
-                      <Crown className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                      <span className="hidden xs:inline">Super</span> Admin
+                  {isOwner ? (
+                    <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500/25 to-emerald-500/20 text-amber-400 border border-amber-400/50 shrink-0">
+                      <Crown className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Owner
+                    </span>
+                  ) : isSuperAdmin ? (
+                    <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400 border border-sky-500/30 shrink-0">
+                      <Crown className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Super Admin
+                    </span>
+                  ) : isModerator ? (
+                    <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-400 border border-violet-500/30 shrink-0">
+                      <ShieldCheck className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Moderator
                     </span>
                   ) : (
                     <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-zinc-200/70 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 shrink-0">
@@ -592,7 +626,7 @@ export default function CompoundingDashboardPage() {
               </div>
             </div>
 
-            {isSuperAdmin && (
+            {hasStaffPanelAccess && (
               <div className="hidden md:inline-flex p-1 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800">
                 <button
                   type="button"
@@ -611,12 +645,22 @@ export default function CompoundingDashboardPage() {
                   onClick={() => setActiveView("admin")}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
                     activeView === "admin"
-                      ? "bg-amber-500 text-zinc-950 shadow-xs"
+                      ? isModerator
+                        ? "bg-violet-500 text-white shadow-xs"
+                        : "bg-amber-500 text-zinc-950 shadow-xs"
+                      : isModerator
+                      ? "text-violet-400 hover:bg-violet-500/10"
                       : "text-amber-500 hover:bg-amber-500/10"
                   }`}
                 >
-                  <Crown className="w-3.5 h-3.5" />
-                  <span>Admin Panel ({allUsers.length})</span>
+                  {isModerator ? (
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                  ) : (
+                    <Crown className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {isModerator ? "Moderator Panel" : "Admin Panel"} ({allUsers.length})
+                  </span>
                 </button>
               </div>
             )}
@@ -675,7 +719,7 @@ export default function CompoundingDashboardPage() {
             </div>
           </div>
 
-          {isSuperAdmin && (
+          {hasStaffPanelAccess && (
             <div className="md:hidden px-4 py-2 border-t border-zinc-200/60 dark:border-zinc-800/60 bg-zinc-50/90 dark:bg-zinc-950/90">
               <div className="grid grid-cols-2 p-1 rounded-xl bg-zinc-200/70 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800">
                 <button
@@ -695,12 +739,22 @@ export default function CompoundingDashboardPage() {
                   onClick={() => setActiveView("admin")}
                   className={`py-2 rounded-lg text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
                     activeView === "admin"
-                      ? "bg-amber-500 text-zinc-950 shadow-xs"
+                      ? isModerator
+                        ? "bg-violet-500 text-white shadow-xs"
+                        : "bg-amber-500 text-zinc-950 shadow-xs"
+                      : isModerator
+                      ? "text-violet-400"
                       : "text-amber-500"
                   }`}
                 >
-                  <Crown className="w-3.5 h-3.5" />
-                  <span>Admin Panel ({allUsers.length})</span>
+                  {isModerator ? (
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                  ) : (
+                    <Crown className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {isModerator ? "Moderator Panel" : "Admin Panel"} ({allUsers.length})
+                  </span>
                 </button>
               </div>
             </div>
@@ -708,8 +762,9 @@ export default function CompoundingDashboardPage() {
         </header>
 
         <main className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 safe-bottom space-y-5 sm:space-y-8">
-          {isSuperAdmin && activeView === "admin" ? (
+          {hasStaffPanelAccess && activeView === "admin" ? (
             <SuperAdminPanel
+              currentUserRole={profile.role}
               allUsers={allUsers}
               currentAnnouncement={announcement}
               onRefreshUsers={loadAdminDirectory}
@@ -832,7 +887,8 @@ export default function CompoundingDashboardPage() {
                     <AnimatedCurrency value={metrics.targetProfitToday} />
                   </div>
                   <p className="mt-1.5 text-xs text-zinc-500 truncate">
-                    Target {metrics.selectedDateLabel}: {formatCompactUSD(metrics.selectedDayEndTarget)}
+                    Target {metrics.selectedDateLabel}:{" "}
+                    {formatCompactUSD(metrics.selectedDayEndTarget)}
                   </p>
                 </div>
 
@@ -845,7 +901,8 @@ export default function CompoundingDashboardPage() {
                     <AnimatedCurrency value={metrics.maxRiskToday} />
                   </div>
                   <p className="mt-1.5 text-xs text-zinc-500">
-                    Daya Tahan SL Beruntun: <span className="font-semibold">{metrics.consecutiveLossEndurance}x</span>
+                    Daya Tahan SL Beruntun:{" "}
+                    <span className="font-semibold">{metrics.consecutiveLossEndurance}x</span>
                   </p>
                 </div>
 
@@ -884,7 +941,7 @@ export default function CompoundingDashboardPage() {
                     </button>
                   </div>
 
-                  {/* Pilihan Instrumen Market (Forex 5 hari, Saham 5 hari, Crypto 7 hari) */}
+                  {/* Pilihan Instrumen Market */}
                   <div className="space-y-1.5">
                     <label className="block text-xs text-zinc-500">Instrumen & Jadwal Pasar</label>
                     <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800">
@@ -899,7 +956,11 @@ export default function CompoundingDashboardPage() {
                               : "text-zinc-500 hover:text-zinc-200"
                           }`}
                         >
-                          {m.id === "forex" ? "Forex (5H)" : m.id === "stocks" ? "Saham (5H)" : "Crypto (7H)"}
+                          {m.id === "forex"
+                            ? "Forex (5H)"
+                            : m.id === "stocks"
+                            ? "Saham (5H)"
+                            : "Crypto (7H)"}
                         </button>
                       ))}
                     </div>
@@ -940,7 +1001,9 @@ export default function CompoundingDashboardPage() {
                           <button
                             key={preset.label}
                             type="button"
-                            onClick={() => syncConfigToCloud({ ...config, targetCapital: preset.value })}
+                            onClick={() =>
+                              syncConfigToCloud({ ...config, targetCapital: preset.value })
+                            }
                             className={`px-2 py-0.5 rounded text-[10px] font-semibold cursor-pointer ${
                               config.targetCapital === preset.value
                                 ? "bg-emerald-600 text-white"
@@ -960,7 +1023,10 @@ export default function CompoundingDashboardPage() {
                       onChange={(e) =>
                         syncConfigToCloud({
                           ...config,
-                          targetCapital: Math.max(config.initialCapital + 1, parseFloat(e.target.value) || 0),
+                          targetCapital: Math.max(
+                            config.initialCapital + 1,
+                            parseFloat(e.target.value) || 0
+                          ),
                         })
                       }
                       className="w-full px-3 py-2 text-sm font-semibold tabular-nums rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
@@ -1035,21 +1101,27 @@ export default function CompoundingDashboardPage() {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => setNewPnl(String(Number(metrics.targetProfitToday.toFixed(2))))}
+                          onClick={() =>
+                            setNewPnl(String(Number(metrics.targetProfitToday.toFixed(2))))
+                          }
                           className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-500 cursor-pointer inline-flex items-center gap-1"
                         >
                           <Sparkles className="w-3 h-3" /> +Target 1x
                         </button>
                         <button
                           type="button"
-                          onClick={() => setNewPnl(String(Number((metrics.targetProfitToday * 2).toFixed(2))))}
+                          onClick={() =>
+                            setNewPnl(String(Number((metrics.targetProfitToday * 2).toFixed(2))))
+                          }
                           className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-sky-500/10 text-sky-500 cursor-pointer"
                         >
                           +Target 2x
                         </button>
                         <button
                           type="button"
-                          onClick={() => setNewPnl(String(-Number(metrics.maxRiskToday.toFixed(2))))}
+                          onClick={() =>
+                            setNewPnl(String(-Number(metrics.maxRiskToday.toFixed(2))))
+                          }
                           className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-rose-500/10 text-rose-500 cursor-pointer"
                         >
                           -Max SL
@@ -1092,7 +1164,7 @@ export default function CompoundingDashboardPage() {
                     </div>
                   </form>
 
-                  {/* Ringkasan Net Per Tanggal (Agregasi Profit & Minus Harian) */}
+                  {/* Ringkasan Net Per Tanggal */}
                   {dailySummaries.length > 0 && (
                     <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 space-y-3">
                       <div className="flex items-center justify-between">
@@ -1138,7 +1210,9 @@ export default function CompoundingDashboardPage() {
                 <div className="px-4 sm:px-6 py-4 border-b border-zinc-200/80 dark:border-zinc-800/80 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h2 className="text-sm font-semibold">3. Log Transaksi Eksekusi Harian</h2>
-                    <span className="text-xs text-zinc-500">{computedJournals.length} Entry Tercatat</span>
+                    <span className="text-xs text-zinc-500">
+                      {computedJournals.length} Entry Tercatat
+                    </span>
                   </div>
                   <div className="flex items-center gap-2 sm:hidden">
                     <button
@@ -1191,9 +1265,15 @@ export default function CompoundingDashboardPage() {
                           >
                             <td className="py-3 px-3 sm:px-4 font-medium">#{row.sessionNumber}</td>
                             <td className="py-3 px-3 sm:px-4 text-zinc-500">{row.executionDate}</td>
-                            <td className="py-3 px-3 sm:px-4">{formatCompactUSD(row.startBalance)}</td>
-                            <td className="py-3 px-3 sm:px-4 text-amber-500">{formatCompactUSD(row.maxRiskAmount)}</td>
-                            <td className="py-3 px-3 sm:px-4 text-sky-500">{formatCompactUSD(row.targetProfitAmount)}</td>
+                            <td className="py-3 px-3 sm:px-4">
+                              {formatCompactUSD(row.startBalance)}
+                            </td>
+                            <td className="py-3 px-3 sm:px-4 text-amber-500">
+                              {formatCompactUSD(row.maxRiskAmount)}
+                            </td>
+                            <td className="py-3 px-3 sm:px-4 text-sky-500">
+                              {formatCompactUSD(row.targetProfitAmount)}
+                            </td>
                             <td
                               className={`py-3 px-3 sm:px-4 font-semibold ${
                                 row.pnlAmount >= 0 ? "text-emerald-500" : "text-rose-500"
@@ -1203,7 +1283,9 @@ export default function CompoundingDashboardPage() {
                                 ? `+${formatCompactUSD(row.pnlAmount)}`
                                 : formatCompactUSD(row.pnlAmount)}
                             </td>
-                            <td className="py-3 px-3 sm:px-4">{(row.dailyReturnPct * 100).toFixed(2)}%</td>
+                            <td className="py-3 px-3 sm:px-4">
+                              {(row.dailyReturnPct * 100).toFixed(2)}%
+                            </td>
                             <td
                               className={`py-3 px-3 sm:px-4 font-semibold ${
                                 isDeficit ? "text-rose-500" : ""
@@ -1215,7 +1297,8 @@ export default function CompoundingDashboardPage() {
                               {isDeficit ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-500 font-semibold">
                                   <AlertTriangle className="w-3 h-3" />
-                                  Defisit -{formatCompactUSD(config.initialCapital - row.endBalance)}
+                                  Defisit -
+                                  {formatCompactUSD(config.initialCapital - row.endBalance)}
                                 </span>
                               ) : achievedDate ? (
                                 <span className="text-emerald-500 font-medium">
@@ -1251,8 +1334,8 @@ export default function CompoundingDashboardPage() {
                       {metrics.estimatedEndDateLabel})
                     </h2>
                     <p className="text-xs text-zinc-500">
-                      {activeMarketInfo.scheduleNote} • Total {metrics.totalDaysRequired} Hari Trading menuju{" "}
-                      {formatCompactUSD(config.targetCapital)}
+                      {activeMarketInfo.scheduleNote} • Total {metrics.totalDaysRequired} Hari
+                      Trading menuju {formatCompactUSD(config.targetCapital)}
                     </p>
                   </div>
                   <div className="inline-flex p-1 rounded-xl bg-zinc-100 dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800 overflow-x-auto no-scrollbar max-w-full">
@@ -1301,7 +1384,9 @@ export default function CompoundingDashboardPage() {
                               </div>
                             </td>
                             <td className="py-2.5 px-3 sm:px-4 text-xs text-zinc-500">{r.phase}</td>
-                            <td className="py-2.5 px-3 sm:px-4">{formatCompactUSD(r.startBalance)}</td>
+                            <td className="py-2.5 px-3 sm:px-4">
+                              {formatCompactUSD(r.startBalance)}
+                            </td>
                             <td className="py-2.5 px-3 sm:px-4 text-emerald-500">
                               +{formatCompactUSD(r.targetProfit)}
                             </td>
