@@ -55,10 +55,14 @@ export function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
 
     try {
       if (mode === "register") {
+        const redirectUrl =
+          typeof window !== "undefined" ? `${window.location.origin}/` : undefined;
+
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
+            emailRedirectTo: redirectUrl,
             data: { full_name: fullName || email.split("@")[0] },
           },
         });
@@ -66,16 +70,9 @@ export function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
         if (data.session) {
           onSuccess();
         } else {
-          setInfoMsg("Akun berhasil dibuat! Silakan cek email verifikasi atau langsung login.");
+          setInfoMsg("Akun berhasil dibuat! Silakan cek kotak masuk email kamu untuk konfirmasi.");
           setMode("login");
         }
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (error) throw error;
-        onSuccess();
       }
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : "Terjadi kesalahan autentikasi.");
