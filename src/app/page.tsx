@@ -7,7 +7,6 @@ import {
   AlertTriangle,
   TrendingUp,
   Target,
-  Activity,
   Flame,
   Plus,
   Trash2,
@@ -27,13 +26,17 @@ import {
   ShieldAlert,
   Wrench,
   RefreshCw,
+  Calendar,
+  CalendarCheck2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
   CompoundingConfig,
   JournalEntryInput,
+  MarketType,
 } from "@/types/compounding";
 import {
+  aggregateJournalsByDate,
   computeDashboardMetrics,
   computeJournals,
   generateDynamicRoadmap,
@@ -51,12 +54,16 @@ import {
   UserProfileRecord,
 } from "@/components/auth-and-admin";
 
+const TODAY_YMD = new Date().toISOString().split("T")[0];
+
 const DEFAULT_CONFIG: CompoundingConfig = {
   initialCapital: 49.33,
   targetCapital: 1000000000,
   dailyTargetPct: 0.1,
   riskPerDayPct: 0.05,
   selectedDay: 1,
+  startDate: TODAY_YMD,
+  marketType: "forex",
 };
 
 const TARGET_PRESETS = [
@@ -64,6 +71,12 @@ const TARGET_PRESETS = [
   { label: "$10M", value: 10_000_000 },
   { label: "$100M", value: 100_000_000 },
   { label: "$1B", value: 1_000_000_000 },
+];
+
+const MARKET_OPTIONS: { id: MarketType; label: string; scheduleNote: string }[] = [
+  { id: "forex", label: "Forex (5 Hari/Mgg)", scheduleNote: "Senin–Jumat (Skip Sabtu & Minggu)" },
+  { id: "stocks", label: "Saham (5 Hari/Mgg)", scheduleNote: "Hari Bursa Senin–Jumat" },
+  { id: "crypto", label: "Crypto (7 Hari/Mgg)", scheduleNote: "24/7 Non-Stop Setiap Hari" },
 ];
 
 export default function CompoundingDashboardPage() {
@@ -77,7 +90,7 @@ export default function CompoundingDashboardPage() {
   const [config, setConfig] = useState<CompoundingConfig>(DEFAULT_CONFIG);
   const [journals, setJournals] = useState<JournalEntryInput[]>([]);
   const [newPnl, setNewPnl] = useState<string>("");
-  const [newDate, setNewDate] = useState<string>("");
+  const [newDate, setNewDate] = useState<string>(TODAY_YMD);
   const [darkMode, setDarkMode] = useState<boolean>(true);
   const [roadmapFilter, setRoadmapFilter] = useState<"ALL" | "PASSED" | "ACTIVE">("ALL");
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -145,6 +158,8 @@ export default function CompoundingDashboardPage() {
         dailyTargetPct: Number(prof.daily_target_pct),
         riskPerDayPct: Number(prof.risk_per_day_pct),
         selectedDay: Number(prof.selected_day),
+        startDate: prof.start_date || TODAY_YMD,
+        marketType: (prof.market_type as MarketType) || "forex",
       });
 
       if (prof.role === "super_admin") {
@@ -156,6 +171,7 @@ export default function CompoundingDashboardPage() {
       .from("daily_journals")
       .select("*")
       .eq("user_id", uid)
+      .order("execution_date", { ascending: true })
       .order("session_number", { ascending: true });
 
     if (journalRows) {
@@ -183,7 +199,6 @@ export default function CompoundingDashboardPage() {
   }, [loadAdminDirectory]);
 
   useEffect(() => {
-    setNewDate(new Date().toISOString().split("T")[0]);
     const savedTheme = localStorage.getItem("nexus_compounding_theme");
     if (savedTheme) setDarkMode(savedTheme === "dark");
 
@@ -215,29 +230,29 @@ export default function CompoundingDashboardPage() {
         daily_target_pct: nextConfig.dailyTargetPct,
         risk_per_day_pct: nextConfig.riskPerDayPct,
         selected_day: nextConfig.selectedDay,
+        start_date: nextConfig.startDate,
+        market_type: nextConfig.marketType,
       })
       .eq("id", userId);
   };
 
-  const roadmap = useMemo(() => {
-    const baseRoadmap = generateDynamicRoadmap(config, config.initialCapital);
-    const provisional = computeJournals(config, journals, baseRoadmap);
+  // Hitung jurnal & agregasi per tanggal terlebih dahulu
+  const { roadmap, computedJournals, dailySummaries, metrics } = useMemo(() => {
+    const initialRoadmap = generateDynamicRoadmap(config, config.initialCapital, []);
+    const computed = computeJournals(config, journals, initialRoadmap);
+    const summaries = aggregateJournalsByDate(computed);
     const latestBal =
-      provisional.length > 0
-        ? provisional[provisional.length - 1].endBalance
-        : config.initialCapital;
-    return generateDynamicRoadmap(config, latestBal);
+      computed.length > 0 ? computed[computed.length - 1].endBalance : config.initialCapital;
+    const finalRoadmap = generateDynamicRoadmap(config, latestBal, summaries);
+    const finalMetrics = computeDashboardMetrics(config, finalRoadmap, computed);
+
+    return {
+      roadmap: finalRoadmap,
+      computedJournals: computed,
+      dailySummaries: summaries,
+      metrics: finalMetrics,
+    };
   }, [config, journals]);
-
-  const computedJournals = useMemo(
-    () => computeJournals(config, journals, roadmap),
-    [config, journals, roadmap]
-  );
-
-  const metrics = useMemo(
-    () => computeDashboardMetrics(config, roadmap, computedJournals),
-    [config, roadmap, computedJournals]
-  );
 
   const drawdownAnalysis = useMemo(() => {
     const isUnderInitial = metrics.currentBalance < config.initialCapital;
@@ -303,15 +318,17 @@ export default function CompoundingDashboardPage() {
     }
 
     const projectedBalance = metrics.currentBalance + parsed;
-    setJournals((prev) => [
-      ...prev,
-      {
-        id: data.id,
-        sessionNumber: data.session_number,
-        executionDate: data.execution_date,
-        pnlAmount: Number(data.pnl_amount),
-      },
-    ]);
+    setJournals((prev) =>
+      [
+        ...prev,
+        {
+          id: data.id,
+          sessionNumber: data.session_number,
+          executionDate: data.execution_date,
+          pnlAmount: Number(data.pnl_amount),
+        },
+      ].sort((a, b) => a.executionDate.localeCompare(b.executionDate))
+    );
     setNewPnl("");
 
     if (projectedBalance < config.initialCapital) {
@@ -320,7 +337,7 @@ export default function CompoundingDashboardPage() {
       );
     } else {
       triggerToast(
-        `Sesi #${nextSession} (${parsed >= 0 ? `+$${parsed}` : `-$${Math.abs(parsed)}`}) tersimpan!`
+        `Entry tanggal ${newDate} (${parsed >= 0 ? `+$${parsed}` : `-$${Math.abs(parsed)}`}) tersimpan!`
       );
     }
     if (profile?.role === "super_admin") loadAdminDirectory();
@@ -333,7 +350,7 @@ export default function CompoundingDashboardPage() {
       .filter((item) => item.id !== id)
       .map((item, idx) => ({ ...item, sessionNumber: idx + 1 }));
     setJournals(updated);
-    triggerToast("Sesi dihapus dari cloud.");
+    triggerToast("Entry dihapus dari cloud.");
     if (profile?.role === "super_admin") loadAdminDirectory();
   };
 
@@ -357,10 +374,11 @@ export default function CompoundingDashboardPage() {
     await syncConfigToCloud({
       ...config,
       initialCapital: Number(metrics.currentBalance.toFixed(2)),
+      startDate: TODAY_YMD,
       selectedDay: 1,
     });
     triggerToast(
-      `Basis modal diperbarui ke ${formatCompactUSD(metrics.currentBalance)}. Siklus baru dimulai!`
+      `Basis modal diperbarui ke ${formatCompactUSD(metrics.currentBalance)} mulai hari ini!`
     );
   };
 
@@ -388,27 +406,30 @@ export default function CompoundingDashboardPage() {
   const handleExportExcel = () => {
     const wb = XLSX.utils.book_new();
     const roadmapSheetData = roadmap.map((r) => ({
-      DAY: `Day ${r.day}`,
+      Tanggal: r.dateStr,
+      Hari: r.dayName,
+      "Sesi Ke-": r.day,
       Fase: r.phase,
       "Modal Awal ($)": Number(r.startBalance.toFixed(2)),
       "Target Profit ($)": Number(r.targetProfit.toFixed(2)),
       "Target Saldo Akhir ($)": Number(r.targetEndBalance.toFixed(2)),
-      "Pertumbuhan (%)": `${(r.cumulativeGrowthPct * 100).toFixed(2)}%`,
+      "Net Aktual Tanggal Ini ($)":
+        r.dailyNetPnlOnDate !== undefined ? Number(r.dailyNetPnlOnDate.toFixed(2)) : "",
       Status: r.status,
     }));
 
     const journalSheetData = computedJournals.map((j) => ({
-      "Sesi Ke-": j.sessionNumber,
+      "Entry Ke-": j.sessionNumber,
       Tanggal: j.executionDate,
       "Saldo Awal ($)": Number(j.startBalance.toFixed(2)),
       "Profit / Loss ($)": Number(j.pnlAmount.toFixed(2)),
       "Saldo Akhir ($)": Number(j.endBalance.toFixed(2)),
-      "Day Aman": j.safeDayAchieved,
+      "Checkpoint Aman": j.safeDayAchieved,
     }));
 
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(roadmapSheetData), "Roadmap Dinamis");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(roadmapSheetData), "Roadmap Kalender");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(journalSheetData), "Jurnal Harian");
-    XLSX.writeFile(wb, `SilentZenith_Day1_to_Day${metrics.totalDaysRequired}.xlsx`);
+    XLSX.writeFile(wb, `SilentZenith_${config.startDate}_to_${metrics.estimatedEndDateStr}.xlsx`);
     triggerToast("File Excel (.xlsx) berhasil diunduh!");
   };
 
@@ -437,11 +458,12 @@ export default function CompoundingDashboardPage() {
           const pnlVal = Number(
             row["Profit / Loss ($)"] ?? row["Total Profit / Loss Hari Ini ($)"] ?? NaN
           );
+          const dateVal = String(row["Tanggal"] || newDate);
           if (!Number.isNaN(pnlVal) && pnlVal !== 0) {
             toInsert.push({
               user_id: userId,
               session_number: journals.length + toInsert.length + 1,
-              execution_date: newDate,
+              execution_date: dateVal,
               pnl_amount: pnlVal,
             });
           }
@@ -450,7 +472,7 @@ export default function CompoundingDashboardPage() {
         if (toInsert.length > 0) {
           await supabase.from("daily_journals").insert(toInsert);
           await bootstrapSession();
-          triggerToast(`${toInsert.length} sesi berhasil diimpor ke database!`);
+          triggerToast(`${toInsert.length} entry berhasil diimpor ke database!`);
         }
       } catch {
         triggerToast("Format file Excel tidak dikenali.");
@@ -506,11 +528,11 @@ export default function CompoundingDashboardPage() {
   }
 
   const isSuperAdmin = profile.role === "super_admin";
+  const activeMarketInfo = MARKET_OPTIONS.find((m) => m.id === config.marketType)!;
 
   return (
     <div className={darkMode ? "dark" : ""}>
       <div className="min-h-[100dvh] bg-zinc-50 text-zinc-900 dark:bg-[#09090B] dark:text-zinc-100 transition-colors duration-300 selection:bg-emerald-500/30">
-        {/* Global Broadcast Banner */}
         {announcement && (
           <div className="bg-gradient-to-r from-amber-500/15 via-emerald-500/15 to-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-center text-xs font-medium flex items-center justify-center gap-2">
             <Megaphone className="w-3.5 h-3.5 text-amber-500 shrink-0" />
@@ -518,7 +540,6 @@ export default function CompoundingDashboardPage() {
           </div>
         )}
 
-        {/* Modal Pengaturan & Ganti Password */}
         <AccountSettingsModal
           isOpen={isSettingsOpen}
           onClose={() => setIsSettingsOpen(false)}
@@ -527,7 +548,6 @@ export default function CompoundingDashboardPage() {
           onNotify={triggerToast}
         />
 
-        {/* Toast Notification (Responsif di Mobile & Desktop) */}
         <AnimatePresence>
           {toastMsg && (
             <motion.div
@@ -542,7 +562,7 @@ export default function CompoundingDashboardPage() {
           )}
         </AnimatePresence>
 
-        {/* Navbar Adaptif (iOS Safe-Area + Mobile/Tablet/Desktop) */}
+        {/* Navbar */}
         <header className="sticky top-0 z-30 safe-top border-b border-zinc-200/80 dark:border-zinc-800/80 bg-white/85 dark:bg-[#09090B]/85 backdrop-blur-xl transition-colors">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -564,7 +584,7 @@ export default function CompoundingDashboardPage() {
                   )}
                 </div>
                 <p className="text-[11px] sm:text-xs text-zinc-500 dark:text-zinc-400 truncate">
-                  {profile.full_name} •{" "}
+                  {profile.full_name} • Target{" "}
                   <span className="font-semibold text-emerald-500">
                     {formatCompactUSD(config.targetCapital)}
                   </span>
@@ -572,7 +592,6 @@ export default function CompoundingDashboardPage() {
               </div>
             </div>
 
-            {/* Switcher Desktop/Tablet */}
             {isSuperAdmin && (
               <div className="hidden md:inline-flex p-1 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800">
                 <button
@@ -602,7 +621,6 @@ export default function CompoundingDashboardPage() {
               </div>
             )}
 
-            {/* Action Buttons (Touch-Friendly >= 40px) */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <input
                 ref={fileInputRef}
@@ -657,7 +675,6 @@ export default function CompoundingDashboardPage() {
             </div>
           </div>
 
-          {/* Mobile Sub-Navigation Bar untuk Super Admin (Layar HP < 768px) */}
           {isSuperAdmin && (
             <div className="md:hidden px-4 py-2 border-t border-zinc-200/60 dark:border-zinc-800/60 bg-zinc-50/90 dark:bg-zinc-950/90">
               <div className="grid grid-cols-2 p-1 rounded-xl bg-zinc-200/70 dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800">
@@ -701,7 +718,7 @@ export default function CompoundingDashboardPage() {
             />
           ) : (
             <>
-              {/* DRAWDOWN ALERT & RECOVERY PROTOCOL BANNER */}
+              {/* DRAWDOWN ALERT BANNER */}
               <AnimatePresence>
                 {drawdownAnalysis && (
                   <motion.section
@@ -738,7 +755,7 @@ export default function CompoundingDashboardPage() {
                             </strong>{" "}
                             atau sekitar{" "}
                             <strong>
-                              {drawdownAnalysis.sessionsToRecoverAtTarget} sesi profit konsisten
+                              {drawdownAnalysis.sessionsToRecoverAtTarget} hari trading konsisten
                             </strong>{" "}
                             pada target {(config.dailyTargetPct * 100).toFixed(1)}%/hari.
                           </p>
@@ -768,7 +785,7 @@ export default function CompoundingDashboardPage() {
                 )}
               </AnimatePresence>
 
-              {/* Bento KPI Grid (1 kolom HP -> 2 kolom Tablet -> 4 kolom Desktop) */}
+              {/* Bento KPI Grid */}
               <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
                 <div
                   className={`p-4 sm:p-5 rounded-2xl bg-white dark:bg-zinc-900/90 border shadow-xs transition-colors ${
@@ -814,8 +831,8 @@ export default function CompoundingDashboardPage() {
                   <div className="mt-2.5 sm:mt-3 text-2xl font-bold tracking-tight tabular-nums">
                     <AnimatedCurrency value={metrics.targetProfitToday} />
                   </div>
-                  <p className="mt-1.5 text-xs text-zinc-500">
-                    Target Day {config.selectedDay}: {formatCompactUSD(metrics.selectedDayEndTarget)}
+                  <p className="mt-1.5 text-xs text-zinc-500 truncate">
+                    Target {metrics.selectedDateLabel}: {formatCompactUSD(metrics.selectedDayEndTarget)}
                   </p>
                 </div>
 
@@ -834,20 +851,19 @@ export default function CompoundingDashboardPage() {
 
                 <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 shadow-xs">
                   <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">
-                    <span>Posisi Day Aman</span>
-                    <Activity className="w-4 h-4 text-violet-500" />
+                    <span>Estimasi Tanggal Target</span>
+                    <CalendarCheck2 className="w-4 h-4 text-violet-500" />
                   </div>
-                  <div className="mt-2.5 sm:mt-3 text-2xl font-bold tracking-tight tabular-nums">
-                    Day {metrics.safeDayAchieved}{" "}
-                    <span className="text-sm font-normal text-zinc-400">/ {metrics.totalDaysRequired}</span>
+                  <div className="mt-2.5 sm:mt-3 text-xl sm:text-2xl font-bold tracking-tight">
+                    {metrics.estimatedEndDateLabel}
                   </div>
                   <p className="mt-1.5 text-xs text-zinc-500 truncate">
-                    Target Akhir: <span className="font-semibold">{formatCompactUSD(config.targetCapital)}</span>
+                    {metrics.totalDaysRequired} Hari Trading • {activeMarketInfo.label}
                   </p>
                 </div>
               </section>
 
-              {/* Chart */}
+              {/* Chart Berbasis Tanggal Kalender */}
               <CompoundingTrajectoryChart
                 roadmap={roadmap}
                 journals={computedJournals}
@@ -858,7 +874,7 @@ export default function CompoundingDashboardPage() {
               <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
                 <div className="p-4 sm:p-6 rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h2 className="text-sm font-semibold">1. Parameter Misi & Risk</h2>
+                    <h2 className="text-sm font-semibold">1. Kalender & Parameter Misi</h2>
                     <button
                       type="button"
                       onClick={() => syncConfigToCloud(DEFAULT_CONFIG)}
@@ -868,6 +884,54 @@ export default function CompoundingDashboardPage() {
                     </button>
                   </div>
 
+                  {/* Pilihan Instrumen Market (Forex 5 hari, Saham 5 hari, Crypto 7 hari) */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs text-zinc-500">Instrumen & Jadwal Pasar</label>
+                    <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800">
+                      {MARKET_OPTIONS.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => syncConfigToCloud({ ...config, marketType: m.id })}
+                          className={`py-2 px-2 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
+                            config.marketType === m.id
+                              ? "bg-emerald-600 text-white shadow-xs"
+                              : "text-zinc-500 hover:text-zinc-200"
+                          }`}
+                        >
+                          {m.id === "forex" ? "Forex (5H)" : m.id === "stocks" ? "Saham (5H)" : "Crypto (7H)"}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-zinc-500">{activeMarketInfo.scheduleNote}</p>
+                  </div>
+
+                  {/* Tanggal Mulai & Estimasi Tanggal Selesai */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-zinc-500 mb-1">Tanggal Mulai</label>
+                      <input
+                        type="date"
+                        value={config.startDate}
+                        onChange={(e) =>
+                          syncConfigToCloud({
+                            ...config,
+                            startDate: e.target.value || TODAY_YMD,
+                          })
+                        }
+                        className="w-full px-3 py-2 text-xs sm:text-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-zinc-500 mb-1">Estimasi Selesai</label>
+                      <div className="w-full px-3 py-2 text-xs sm:text-sm font-semibold text-emerald-500 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center gap-1.5 truncate">
+                        <Calendar className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">{metrics.estimatedEndDateLabel}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Target Akhir */}
                   <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center justify-between gap-1.5">
                       <label className="text-xs text-zinc-500">Target Akhir ($)</label>
@@ -877,7 +941,7 @@ export default function CompoundingDashboardPage() {
                             key={preset.label}
                             type="button"
                             onClick={() => syncConfigToCloud({ ...config, targetCapital: preset.value })}
-                            className={`px-2.5 py-1 rounded text-[11px] font-semibold cursor-pointer ${
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold cursor-pointer ${
                               config.targetCapital === preset.value
                                 ? "bg-emerald-600 text-white"
                                 : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500"
@@ -899,13 +963,13 @@ export default function CompoundingDashboardPage() {
                           targetCapital: Math.max(config.initialCapital + 1, parseFloat(e.target.value) || 0),
                         })
                       }
-                      className="w-full px-3 py-2.5 text-sm font-semibold tabular-nums rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                      className="w-full px-3 py-2 text-sm font-semibold tabular-nums rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-2.5">
                     <div>
-                      <label className="block text-xs text-zinc-500 mb-1">Modal Awal ($)</label>
+                      <label className="block text-[11px] text-zinc-500 mb-1">Modal Awal ($)</label>
                       <input
                         type="number"
                         inputMode="decimal"
@@ -917,30 +981,11 @@ export default function CompoundingDashboardPage() {
                             initialCapital: Math.max(1, parseFloat(e.target.value) || 0),
                           })
                         }
-                        className="w-full px-3 py-2.5 text-sm tabular-nums rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                        className="w-full px-2.5 py-2 text-sm tabular-nums rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-zinc-500 mb-1">
-                        Pilih Day (1-{metrics.totalDaysRequired})
-                      </label>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min={1}
-                        max={metrics.totalDaysRequired}
-                        value={config.selectedDay}
-                        onChange={(e) =>
-                          syncConfigToCloud({
-                            ...config,
-                            selectedDay: Math.max(1, parseInt(e.target.value, 10) || 1),
-                          })
-                        }
-                        className="w-full px-3 py-2.5 text-sm tabular-nums rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-zinc-500 mb-1">Target Harian (%)</label>
+                      <label className="block text-[11px] text-zinc-500 mb-1">Target/Hari (%)</label>
                       <input
                         type="number"
                         inputMode="decimal"
@@ -952,11 +997,11 @@ export default function CompoundingDashboardPage() {
                             dailyTargetPct: Math.max(0.1, (parseFloat(e.target.value) || 0) / 100),
                           })
                         }
-                        className="w-full px-3 py-2.5 text-sm tabular-nums rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                        className="w-full px-2.5 py-2 text-sm tabular-nums rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-zinc-500 mb-1">Risk per Hari (%)</label>
+                      <label className="block text-[11px] text-zinc-500 mb-1">Risk/Hari (%)</label>
                       <input
                         type="number"
                         inputMode="decimal"
@@ -968,90 +1013,132 @@ export default function CompoundingDashboardPage() {
                             riskPerDayPct: Math.max(0.1, (parseFloat(e.target.value) || 0) / 100),
                           })
                         }
-                        className="w-full px-3 py-2.5 text-sm tabular-nums rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                        className="w-full px-2.5 py-2 text-sm tabular-nums rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
                       />
                     </div>
                   </div>
                 </div>
 
-                <form
-                  onSubmit={handleAddSession}
-                  className="lg:col-span-2 p-4 sm:p-6 rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 flex flex-col justify-between space-y-4"
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                    <div>
-                      <h2 className="text-sm font-semibold">2. Catat Hasil Sesi Eksekusi Baru</h2>
-                      <p className="text-xs text-zinc-500 mt-0.5">
-                        Tersimpan aman secara real-time di akun cloud Anda.
-                      </p>
+                {/* Form Catat Entry Per Tanggal */}
+                <div className="lg:col-span-2 flex flex-col justify-between gap-4">
+                  <form
+                    onSubmit={handleAddSession}
+                    className="p-4 sm:p-6 rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 space-y-4"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div>
+                        <h2 className="text-sm font-semibold">2. Catat Profit / Minus Per Tanggal</h2>
+                        <p className="text-xs text-zinc-500 mt-0.5">
+                          Beberapa entry di tanggal yang sama otomatis dijumlahkan menjadi Net Harian.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setNewPnl(String(Number(metrics.targetProfitToday.toFixed(2))))}
+                          className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-500 cursor-pointer inline-flex items-center gap-1"
+                        >
+                          <Sparkles className="w-3 h-3" /> +Target 1x
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewPnl(String(Number((metrics.targetProfitToday * 2).toFixed(2))))}
+                          className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-sky-500/10 text-sky-500 cursor-pointer"
+                        >
+                          +Target 2x
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewPnl(String(-Number(metrics.maxRiskToday.toFixed(2))))}
+                          className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-rose-500/10 text-rose-500 cursor-pointer"
+                        >
+                          -Max SL
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setNewPnl(String(Number(metrics.targetProfitToday.toFixed(2))))}
-                        className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-500 cursor-pointer inline-flex items-center gap-1"
-                      >
-                        <Sparkles className="w-3 h-3" /> +Target 1x
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNewPnl(String(Number((metrics.targetProfitToday * 2).toFixed(2))))}
-                        className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-sky-500/10 text-sky-500 cursor-pointer"
-                      >
-                        +Target 2x
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNewPnl(String(-Number(metrics.maxRiskToday.toFixed(2))))}
-                        className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-rose-500/10 text-rose-500 cursor-pointer"
-                      >
-                        -Max SL
-                      </button>
-                    </div>
-                  </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs text-zinc-500 mb-1">Tanggal Eksekusi</label>
-                      <input
-                        type="date"
-                        required
-                        value={newDate}
-                        onChange={(e) => setNewDate(e.target.value)}
-                        className="w-full px-3 py-2.5 text-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
-                      />
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs text-zinc-500 mb-1">Tanggal Trading</label>
+                        <input
+                          type="date"
+                          required
+                          value={newDate}
+                          onChange={(e) => setNewDate(e.target.value)}
+                          className="w-full px-3 py-2.5 text-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-zinc-500 mb-1">Profit / Minus ($)</label>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step="0.01"
+                          required
+                          placeholder="Contoh: 5.20 atau -2.10"
+                          value={newPnl}
+                          onChange={(e) => setNewPnl(e.target.value)}
+                          className="w-full px-3 py-2.5 text-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <button
+                          type="submit"
+                          className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4" /> Simpan ke Tanggal Ini
+                        </button>
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-xs text-zinc-500 mb-1">Profit / Loss ($)</label>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        step="0.01"
-                        required
-                        placeholder="Contoh: 5.20 atau -2.10"
-                        value={newPnl}
-                        onChange={(e) => setNewPnl(e.target.value)}
-                        className="w-full px-3 py-2.5 text-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950"
-                      />
+                  </form>
+
+                  {/* Ringkasan Net Per Tanggal (Agregasi Profit & Minus Harian) */}
+                  {dailySummaries.length > 0 && (
+                    <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                          Rekap Net Profit / Minus Per Tanggal ({dailySummaries.length} Hari Aktif)
+                        </h3>
+                      </div>
+                      <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1 tabular-nums">
+                        {dailySummaries.map((daySum) => (
+                          <div
+                            key={daySum.dateStr}
+                            className={`min-w-[145px] p-3 rounded-xl border shrink-0 ${
+                              daySum.netPnl >= 0
+                                ? "bg-emerald-500/[0.06] border-emerald-500/25"
+                                : "bg-rose-500/[0.06] border-rose-500/25"
+                            }`}
+                          >
+                            <div className="text-[11px] text-zinc-500">
+                              {daySum.dayName}, {daySum.dateLabel}
+                            </div>
+                            <div
+                              className={`text-sm font-bold mt-1 ${
+                                daySum.netPnl >= 0 ? "text-emerald-500" : "text-rose-500"
+                              }`}
+                            >
+                              {daySum.netPnl >= 0
+                                ? `+${formatCompactUSD(daySum.netPnl)}`
+                                : formatCompactUSD(daySum.netPnl)}
+                            </div>
+                            <div className="text-[11px] text-zinc-400 mt-0.5">
+                              Saldo: {formatCompactUSD(daySum.endBalance)} ({daySum.sessionsCount}x)
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div className="flex items-end">
-                      <button
-                        type="submit"
-                        className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" /> Simpan Sesi
-                      </button>
-                    </div>
-                  </div>
-                </form>
+                  )}
+                </div>
               </section>
 
-              {/* Tabel Jurnal (Dilengkapi tombol Import/Export mobile-friendly) */}
+              {/* Tabel Jurnal Detail */}
               <section className="rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 overflow-hidden">
                 <div className="px-4 sm:px-6 py-4 border-b border-zinc-200/80 dark:border-zinc-800/80 flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h2 className="text-sm font-semibold">3. Jurnal Eksekusi Harian</h2>
-                    <span className="text-xs text-zinc-500">{computedJournals.length} Sesi Tercatat</span>
+                    <h2 className="text-sm font-semibold">3. Log Transaksi Eksekusi Harian</h2>
+                    <span className="text-xs text-zinc-500">{computedJournals.length} Entry Tercatat</span>
                   </div>
                   <div className="flex items-center gap-2 sm:hidden">
                     <button
@@ -1074,12 +1161,12 @@ export default function CompoundingDashboardPage() {
                   <table className="w-full text-left border-collapse text-xs sm:text-sm whitespace-nowrap">
                     <thead>
                       <tr className="border-b border-zinc-200/80 dark:border-zinc-800/80 text-xs text-zinc-500 bg-zinc-50/50 dark:bg-zinc-950/50">
-                        <th className="py-3 px-3 sm:px-4 font-medium">Sesi</th>
+                        <th className="py-3 px-3 sm:px-4 font-medium">Entry</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Tanggal</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Saldo Awal</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Batas Risk</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Target Profit</th>
-                        <th className="py-3 px-3 sm:px-4 font-medium">Profit / Loss</th>
+                        <th className="py-3 px-3 sm:px-4 font-medium">Profit / Minus</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Return</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Saldo Akhir</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Status Checkpoint</th>
@@ -1089,6 +1176,10 @@ export default function CompoundingDashboardPage() {
                     <tbody className="divide-y divide-zinc-200/60 dark:divide-zinc-800/60 tabular-nums">
                       {computedJournals.map((row) => {
                         const isDeficit = row.endBalance < config.initialCapital;
+                        const achievedDate =
+                          row.safeDayAchieved > 0
+                            ? roadmap[row.safeDayAchieved - 1]?.dateLabel
+                            : null;
                         return (
                           <tr
                             key={row.id}
@@ -1126,10 +1217,12 @@ export default function CompoundingDashboardPage() {
                                   <AlertTriangle className="w-3 h-3" />
                                   Defisit -{formatCompactUSD(config.initialCapital - row.endBalance)}
                                 </span>
-                              ) : (
+                              ) : achievedDate ? (
                                 <span className="text-emerald-500 font-medium">
-                                  Aman s/d Day {row.safeDayAchieved}
+                                  Setara Target {achievedDate}
                                 </span>
+                              ) : (
+                                <span className="text-zinc-400">Menuju Target Pertama</span>
                               )}
                             </td>
                             <td className="py-3 px-3 sm:px-4 text-right">
@@ -1149,15 +1242,17 @@ export default function CompoundingDashboardPage() {
                 </div>
               </section>
 
-              {/* Tabel Roadmap */}
+              {/* Tabel Roadmap Berbasis Tanggal Kalender */}
               <section className="rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 overflow-hidden">
                 <div className="px-4 sm:px-6 py-4 border-b border-zinc-200/80 dark:border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h2 className="text-sm font-semibold">
-                      4. Roadmap Compounding Dinamis (Day 1 — Day {metrics.totalDaysRequired})
+                      4. Jadwal Compounding Kalender ({roadmap[0]?.dateLabel} —{" "}
+                      {metrics.estimatedEndDateLabel})
                     </h2>
                     <p className="text-xs text-zinc-500">
-                      Menuju {formatCompactUSD(config.targetCapital)}
+                      {activeMarketInfo.scheduleNote} • Total {metrics.totalDaysRequired} Hari Trading menuju{" "}
+                      {formatCompactUSD(config.targetCapital)}
                     </p>
                   </div>
                   <div className="inline-flex p-1 rounded-xl bg-zinc-100 dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800 overflow-x-auto no-scrollbar max-w-full">
@@ -1185,11 +1280,12 @@ export default function CompoundingDashboardPage() {
                   <table className="w-full text-left border-collapse text-xs sm:text-sm whitespace-nowrap">
                     <thead className="sticky top-0 z-10 bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200/80 dark:border-zinc-800 text-xs text-zinc-500">
                       <tr>
-                        <th className="py-3 px-3 sm:px-4 font-medium">Day</th>
+                        <th className="py-3 px-3 sm:px-4 font-medium">Tanggal</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Fase</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Modal Awal</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Target Profit</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Target Saldo Akhir</th>
+                        <th className="py-3 px-3 sm:px-4 font-medium">Net Aktual Tgl Ini</th>
                         <th className="py-3 px-3 sm:px-4 font-medium">Status</th>
                       </tr>
                     </thead>
@@ -1198,13 +1294,35 @@ export default function CompoundingDashboardPage() {
                         const isDay1Deficit = r.day === 1 && Boolean(drawdownAnalysis);
                         return (
                           <tr key={r.day} className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40">
-                            <td className="py-2.5 px-3 sm:px-4 font-medium">Day {r.day}</td>
+                            <td className="py-2.5 px-3 sm:px-4">
+                              <div className="font-semibold">{r.dateLabel}</div>
+                              <div className="text-[11px] text-zinc-500">
+                                {r.dayName} • Sesi #{r.day}
+                              </div>
+                            </td>
                             <td className="py-2.5 px-3 sm:px-4 text-xs text-zinc-500">{r.phase}</td>
                             <td className="py-2.5 px-3 sm:px-4">{formatCompactUSD(r.startBalance)}</td>
                             <td className="py-2.5 px-3 sm:px-4 text-emerald-500">
                               +{formatCompactUSD(r.targetProfit)}
                             </td>
-                            <td className="py-2.5 px-3 sm:px-4 font-semibold">{formatCompactUSD(r.targetEndBalance)}</td>
+                            <td className="py-2.5 px-3 sm:px-4 font-semibold">
+                              {formatCompactUSD(r.targetEndBalance)}
+                            </td>
+                            <td className="py-2.5 px-3 sm:px-4">
+                              {r.dailyNetPnlOnDate !== undefined ? (
+                                <span
+                                  className={`font-semibold ${
+                                    r.dailyNetPnlOnDate >= 0 ? "text-emerald-500" : "text-rose-500"
+                                  }`}
+                                >
+                                  {r.dailyNetPnlOnDate >= 0
+                                    ? `+${formatCompactUSD(r.dailyNetPnlOnDate)}`
+                                    : formatCompactUSD(r.dailyNetPnlOnDate)}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-zinc-400">—</span>
+                              )}
+                            </td>
                             <td className="py-2.5 px-3 sm:px-4">
                               {isDay1Deficit ? (
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/15 text-rose-500 border border-rose-500/30">
