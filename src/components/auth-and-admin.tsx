@@ -22,11 +22,13 @@ import {
 import { supabase } from "@/lib/supabase";
 import { ZenithLogo, formatCompactUSD } from "./brand-and-chart";
 
+export type StaffOrUserRole = "owner" | "super_admin" | "moderator" | "user";
+
 export interface UserProfileRecord {
   id: string;
   email: string;
   full_name: string | null;
-  role: "user" | "super_admin";
+  role: StaffOrUserRole;
   is_suspended: boolean;
   initial_capital: number;
   target_capital: number;
@@ -37,7 +39,6 @@ export interface UserProfileRecord {
   latest_balance?: number;
   sessions_count?: number;
 }
-
 /**
  * 1. Halaman Login, Register, Lupa Password & Reset Password Baru
  */
@@ -484,6 +485,7 @@ export function AccountSettingsModal({
  * 3. Panel Eksklusif Super Admin
  */
 interface SuperAdminPanelProps {
+  currentUserRole: StaffOrUserRole;
   allUsers: UserProfileRecord[];
   currentAnnouncement: string;
   onRefreshUsers: () => Promise<void>;
@@ -492,6 +494,7 @@ interface SuperAdminPanelProps {
 }
 
 export function SuperAdminPanel({
+  currentUserRole,
   allUsers,
   currentAnnouncement,
   onRefreshUsers,
@@ -501,19 +504,37 @@ export function SuperAdminPanel({
   const [broadcastText, setBroadcastText] = useState(currentAnnouncement);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
 
+  const isOwner = currentUserRole === "owner";
+  const isSuperAdmin = currentUserRole === "super_admin";
+  const isModerator = currentUserRole === "moderator";
+
   const totalCommunityCapital = allUsers.reduce(
     (sum, u) => sum + (u.latest_balance ?? Number(u.initial_capital)),
     0
   );
 
+  const canSuspendTarget = (target: UserProfileRecord) => {
+    if (target.role === "owner") return false;
+    if (isOwner) return true;
+    if (isSuperAdmin) return target.role === "moderator" || target.role === "user";
+    if (isModerator) return target.role === "user";
+    return false;
+  };
+
   const handleToggleSuspend = async (user: UserProfileRecord) => {
+    if (!canSuspendTarget(user)) {
+      onNotify("Anda tidak memiliki izin untuk mengubah status akun ini.");
+      return;
+    }
     setBusyUserId(user.id);
     const { error } = await supabase
       .from("user_profiles")
       .update({ is_suspended: !user.is_suspended })
       .eq("id", user.id);
 
-    if (!error) {
+    if (error) {
+      onNotify(error.message);
+    } else {
       await onRefreshUsers();
       onNotify(
         !user.is_suspended
@@ -524,17 +545,27 @@ export function SuperAdminPanel({
     setBusyUserId(null);
   };
 
-  const handleToggleRole = async (user: UserProfileRecord) => {
-    const nextRole = user.role === "super_admin" ? "user" : "super_admin";
+  const handleSetRole = async (user: UserProfileRecord, nextRole: StaffOrUserRole) => {
+    if (user.role === "owner" || nextRole === "owner") {
+      onNotify("Role OWNER bersifat mutlak dan dilindungi sistem.");
+      return;
+    }
+    if (!isOwner && !(isSuperAdmin && (nextRole === "moderator" || nextRole === "user") && user.role !== "super_admin")) {
+      onNotify("Anda tidak memiliki otoritas untuk menetapkan role ini.");
+      return;
+    }
+
     setBusyUserId(user.id);
     const { error } = await supabase
       .from("user_profiles")
       .update({ role: nextRole })
       .eq("id", user.id);
 
-    if (!error) {
+    if (error) {
+      onNotify(error.message);
+    } else {
       await onRefreshUsers();
-      onNotify(`Role ${user.email} diubah menjadi ${nextRole.toUpperCase()}.`);
+      onNotify(`Role ${user.email} diperbarui menjadi ${nextRole.toUpperCase()}.`);
     }
     setBusyUserId(null);
   };
@@ -544,22 +575,37 @@ export function SuperAdminPanel({
     await onPostAnnouncement(broadcastText);
   };
 
+  const headerTitle = isOwner
+    ? "Owner Command Center"
+    : isSuperAdmin
+    ? "Super Admin Command Center"
+    : "Moderator Assistant Panel";
+
+  const headerBadge = isOwner
+    ? "Immutable Root Owner"
+    : isSuperAdmin
+    ? "Super Admin Access"
+    : "Assistant Moderator";
+
   return (
     <div className="space-y-6">
+      {/* Header Banner */}
       <div className="p-6 rounded-2xl bg-gradient-to-r from-amber-500/10 via-emerald-500/10 to-zinc-900 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
             <Crown className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-base font-bold tracking-tight flex items-center gap-2">
-              Super Admin Command Center
+            <h2 className="text-base font-bold tracking-tight flex flex-wrap items-center gap-2">
+              {headerTitle}
               <span className="text-[10px] uppercase px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                Root Access
+                {headerBadge}
               </span>
             </h2>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              Kendali penuh atas seluruh pengguna, telemetri portofolio komunitas, dan pengumuman global.
+              {isModerator
+                ? "Mode Asisten: Pantau telemetri komunitas, kelola pengumuman, dan moderasi akun user."
+                : "Kendali manajemen pengguna, delegasi asisten moderator, dan telemetri komunitas."}
             </p>
           </div>
         </div>
@@ -578,6 +624,7 @@ export function SuperAdminPanel({
         </div>
       </div>
 
+      {/* Global Broadcast */}
       <form
         onSubmit={handleSendBroadcast}
         className="p-6 rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 space-y-3"
@@ -604,6 +651,7 @@ export function SuperAdminPanel({
         </div>
       </form>
 
+      {/* Tabel Direktori Pengguna */}
       <div className="rounded-2xl bg-white dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-800/80 overflow-hidden">
         <div className="px-6 py-4 border-b border-zinc-200/80 dark:border-zinc-800/80 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -620,7 +668,7 @@ export function SuperAdminPanel({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-sm">
+          <table className="w-full text-left border-collapse text-sm whitespace-nowrap">
             <thead>
               <tr className="border-b border-zinc-200/80 dark:border-zinc-800/80 text-xs text-zinc-500 bg-zinc-50/50 dark:bg-zinc-950/50">
                 <th className="py-3 px-4 font-medium">Pengguna</th>
@@ -630,70 +678,117 @@ export function SuperAdminPanel({
                 <th className="py-3 px-4 font-medium">Target Akhir</th>
                 <th className="py-3 px-4 font-medium">Sesi Jurnal</th>
                 <th className="py-3 px-4 font-medium">Status</th>
-                <th className="py-3 px-4 font-medium text-right">Kontrol Admin</th>
+                <th className="py-3 px-4 font-medium text-right">Kontrol Hak Akses</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200/60 dark:divide-zinc-800/60 tabular-nums">
-              {allUsers.map((u) => (
-                <tr key={u.id} className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40">
-                  <td className="py-3 px-4">
-                    <div className="font-medium">{u.full_name || "Trader"}</div>
-                    <div className="text-xs text-zinc-500">{u.email}</div>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                        u.role === "super_admin"
-                          ? "bg-amber-500/15 text-amber-500 border border-amber-500/30"
-                          : "bg-zinc-200/70 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300"
-                      }`}
-                    >
-                      {u.role === "super_admin" && <Crown className="w-3 h-3" />}
-                      {u.role}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">{formatCompactUSD(Number(u.initial_capital))}</td>
-                  <td className="py-3 px-4 font-semibold text-emerald-500">
-                    {formatCompactUSD(u.latest_balance ?? Number(u.initial_capital))}
-                  </td>
-                  <td className="py-3 px-4">{formatCompactUSD(Number(u.target_capital))}</td>
-                  <td className="py-3 px-4">{u.sessions_count ?? 0} Sesi</td>
-                  <td className="py-3 px-4">
-                    {u.is_suspended ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-rose-500 font-medium">
-                        <ShieldAlert className="w-3.5 h-3.5" /> Suspended
+              {allUsers.map((u) => {
+                const targetIsOwner = u.role === "owner";
+                const targetIsAdmin = u.role === "super_admin";
+                const targetIsMod = u.role === "moderator";
+
+                return (
+                  <tr key={u.id} className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40">
+                    <td className="py-3 px-4">
+                      <div className="font-medium">{u.full_name || "Trader"}</div>
+                      <div className="text-xs text-zinc-500">{u.email}</div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase ${
+                          targetIsOwner
+                            ? "bg-gradient-to-r from-amber-500/25 to-emerald-500/25 text-amber-400 border border-amber-400/50"
+                            : targetIsAdmin
+                            ? "bg-sky-500/15 text-sky-400 border border-sky-500/30"
+                            : targetIsMod
+                            ? "bg-violet-500/15 text-violet-400 border border-violet-500/30"
+                            : "bg-zinc-200/70 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300"
+                        }`}
+                      >
+                        {(targetIsOwner || targetIsAdmin) && <Crown className="w-3 h-3" />}
+                        {u.role}
                       </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-xs text-emerald-500 font-medium">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Aktif
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4 text-right space-x-2">
-                    <button
-                      type="button"
-                      disabled={busyUserId === u.id}
-                      onClick={() => handleToggleRole(u)}
-                      className="px-2.5 py-1 rounded-lg text-xs border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
-                    >
-                      {u.role === "super_admin" ? "Jadikan User" : "Jadikan Admin"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busyUserId === u.id}
-                      onClick={() => handleToggleSuspend(u)}
-                      className={`px-2.5 py-1 rounded-lg text-xs inline-flex items-center gap-1 cursor-pointer ${
-                        u.is_suspended
-                          ? "bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20"
-                          : "bg-rose-500/10 text-rose-500 hover:bg-rose-500/20"
-                      }`}
-                    >
-                      <Ban className="w-3 h-3" />
-                      {u.is_suspended ? "Aktifkan" : "Suspend"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="py-3 px-4">{formatCompactUSD(Number(u.initial_capital))}</td>
+                    <td className="py-3 px-4 font-semibold text-emerald-500">
+                      {formatCompactUSD(u.latest_balance ?? Number(u.initial_capital))}
+                    </td>
+                    <td className="py-3 px-4">{formatCompactUSD(Number(u.target_capital))}</td>
+                    <td className="py-3 px-4">{u.sessions_count ?? 0} Sesi</td>
+                    <td className="py-3 px-4">
+                      {u.is_suspended ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-rose-500 font-medium">
+                          <ShieldAlert className="w-3.5 h-3.5" /> Suspended
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs text-emerald-500 font-medium">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Aktif
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right space-x-1.5">
+                      {targetIsOwner ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                          <Lock className="w-3 h-3" /> Dilindungi Sistem
+                        </span>
+                      ) : (
+                        <>
+                          {/* Kontrol Delegasi Moderator (Bisa dilakukan oleh Owner & Super Admin untuk akun user/moderator) */}
+                          {(isOwner || (isSuperAdmin && !targetIsAdmin)) && (
+                            <button
+                              type="button"
+                              disabled={busyUserId === u.id}
+                              onClick={() =>
+                                handleSetRole(u, targetIsMod ? "user" : "moderator")
+                              }
+                              className="px-2.5 py-1 rounded-lg text-xs border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 cursor-pointer"
+                            >
+                              {targetIsMod ? "Copot Moderator" : "Jadikan Moderator"}
+                            </button>
+                          )}
+
+                          {/* Kontrol Delegasi Super Admin (HANYA bisa dilakukan oleh OWNER) */}
+                          {isOwner && (
+                            <button
+                              type="button"
+                              disabled={busyUserId === u.id}
+                              onClick={() =>
+                                handleSetRole(u, targetIsAdmin ? "user" : "super_admin")
+                              }
+                              className="px-2.5 py-1 rounded-lg text-xs border border-sky-500/30 text-sky-400 hover:bg-sky-500/10 cursor-pointer"
+                            >
+                              {targetIsAdmin ? "Turunkan Admin" : "Angkat Super Admin"}
+                            </button>
+                          )}
+
+                          {/* Tombol Suspend sesuai hierarki wewenang */}
+                          {canSuspendTarget(u) ? (
+                            <button
+                              type="button"
+                              disabled={busyUserId === u.id}
+                              onClick={() => handleToggleSuspend(u)}
+                              className={`px-2.5 py-1 rounded-lg text-xs inline-flex items-center gap-1 cursor-pointer ${
+                                u.is_suspended
+                                  ? "bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20"
+                                  : "bg-rose-500/10 text-rose-500 hover:bg-rose-500/20"
+                              }`}
+                            >
+                              <Ban className="w-3 h-3" />
+                              {u.is_suspended ? "Aktifkan" : "Suspend"}
+                            </button>
+                          ) : (
+                            isModerator && (
+                              <span className="text-[11px] text-zinc-500 italic">
+                                Akses Terbatas
+                              </span>
+                            )
+                          )}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
