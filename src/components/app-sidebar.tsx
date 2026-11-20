@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   BookOpen,
@@ -61,17 +61,22 @@ export function AppSidebarLayout({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(true);
   const [financeOpen, setFinanceOpen] = useState(true);
+  const [formattedDate, setFormattedDate] = useState<string>("");
+
+  useEffect(() => {
+    setFormattedDate(
+      new Intl.DateTimeFormat("id-ID", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      }).format(new Date())
+    );
+  }, []);
 
   const progressPct =
     targetBalance > 0
       ? Math.min(100, Math.max(0, (currentBalance / targetBalance) * 100))
       : 0;
-
-  const formattedDate = new Intl.DateTimeFormat("id-ID", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(new Date());
 
   const handleNav = (id: NavSectionId) => {
     onSelectTab(id);
@@ -261,7 +266,7 @@ export function AppSidebarLayout({
         </div>
       </nav>
 
-      {/* Bottom Project Progress Card (Persis seperti PDF) */}
+      {/* Bottom Project Progress Card */}
       <div className="p-3.5 border-t border-slate-800/80 shrink-0 bg-[#0B1120]/60">
         <div className="rounded-xl border border-slate-800 bg-slate-900/90 p-3.5">
           <div className="flex items-center justify-between text-xs mb-1.5">
@@ -273,7 +278,9 @@ export function AppSidebarLayout({
           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
             <div
               className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500"
-              style={{ width: `${Math.max(progressPct, progressPct > 0 ? 3 : 0)}%` }}
+              style={{
+                width: `${Math.max(progressPct, progressPct > 0 ? 3 : 0)}%`,
+              }}
             />
           </div>
           <p className="mt-2 text-[11px] text-slate-400">
@@ -312,7 +319,7 @@ export function AppSidebarLayout({
 
       {/* Main Content Wrapper */}
       <div className="flex flex-1 flex-col lg:pl-64 min-w-0">
-        {/* Top Header Bar (Persis referensi PDF kanan atas) */}
+        {/* Top Header Bar */}
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-800/80 bg-[#0B1120]/90 px-4 sm:px-8 backdrop-blur-md">
           <div className="flex items-center gap-3">
             <button
@@ -332,9 +339,11 @@ export function AppSidebarLayout({
 
           <div className="flex items-center gap-3 sm:gap-4">
             {/* Date Badge */}
-            <div className="hidden sm:flex items-center rounded-lg border border-slate-800 bg-slate-900/90 px-3.5 py-1.5 text-xs font-medium text-slate-300">
-              {formattedDate}
-            </div>
+            {formattedDate && (
+              <div className="hidden sm:flex items-center rounded-lg border border-slate-800 bg-slate-900/90 px-3.5 py-1.5 text-xs font-medium text-slate-300">
+                {formattedDate}
+              </div>
+            )}
 
             {/* Notification Bell */}
             <button
