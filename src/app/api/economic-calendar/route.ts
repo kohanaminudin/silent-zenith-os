@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { EconomicEvent } from "@/types/horizon";
 
-export const dynamic = "force-dynamic";
 
 interface RawCalendarItem {
   title?: string;
