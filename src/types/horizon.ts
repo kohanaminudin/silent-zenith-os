@@ -78,8 +78,8 @@ export interface DeterministicCycleRow {
   fee: number;
   netPnl: number;
   endBalance: number;
-  cumulativeWd: number;
-  progressPct: number;
+  cumulativeWd?: number;
+  progressPct?: number;
 }
 
 export interface MonteCarloParams {
@@ -119,6 +119,7 @@ export interface MonteCarloCycleDetail {
   tradeRangeLabel: string;
   startBalance: number;
   endBalance: number;
+  returnPct: number;
   wins: number;
   losses: number;
   drawdownPct: number;
