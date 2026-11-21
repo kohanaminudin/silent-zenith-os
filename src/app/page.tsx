@@ -8,6 +8,11 @@ import { JournalAndAnalyticsModule } from "@/components/journal-and-analytics";
 import { AssistantHubModule } from "@/components/assistant-hub";
 import { AdminPanelModule } from "@/components/admin-panel";
 import { AuthGate } from "@/components/auth-gate";
+import { ChangePasswordCard } from "@/components/change-password-card";
+import {
+  CapitalTargetBanner,
+  CapitalTargetModal,
+} from "@/components/capital-target-control";
 import {
   CalendarModule,
   DashboardOverviewView,
@@ -48,16 +53,25 @@ function createInitialSettings(email: string, name: string): AppSettings {
     quietHoursStart: 22,
     quietHoursEnd: 7,
     telegramEnabled: false,
+    riskPerTradePct: 10,
+    dailyTargetPct: 20,
+    onboardingCompleted: false,
   };
 }
 
 export default function SilentZenithFullOSPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState<boolean>(false);
   const [workspaceReady, setWorkspaceReady] = useState<boolean>(false);
 
   const [activeTab, setActiveTab] = useState<NavSectionId>("dashboard");
   const [todayStr, setTodayStr] = useState<string>("");
+
+  const [capitalModalOpen, setCapitalModalOpen] = useState<boolean>(false);
+  const [capitalModalMode, setCapitalModalMode] = useState<
+    "SETUP_TARGET" | "TOPUP_DEPOSIT"
+  >("SETUP_TARGET");
 
   const [settings, setSettings] = useState<AppSettings>(() =>
     createInitialSettings("", "")
@@ -69,8 +83,8 @@ export default function SilentZenithFullOSPage() {
       name: "Rencana Utama",
       targetUsd: 1000000,
       initialUsd: 100,
-      returnPerCyclePct: 5,
-      frequency: "Mingguan",
+      returnPerCyclePct: 20,
+      frequency: "Harian",
       wdMode: "dynamic_pct",
       wdCapPct: 50,
       feePerCycle: 0,
@@ -97,7 +111,6 @@ export default function SilentZenithFullOSPage() {
     settings,
   });
 
-  // 1. Cek Sesi Login Supabase
   useEffect(() => {
     const supabase = getSupabaseBrowser();
 
@@ -108,10 +121,14 @@ export default function SilentZenithFullOSPage() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setIsPasswordRecovery(true);
+      }
       setSession(nextSession);
       setAuthChecking(false);
       if (!nextSession) {
+        setIsPasswordRecovery(false);
         setWorkspaceReady(false);
         setActiveTab("dashboard");
       }
@@ -144,7 +161,6 @@ export default function SilentZenithFullOSPage() {
     }
   }, []);
 
-  // 2. Muat Workspace Terisolasi Khusus User yang Sedang Login
   useEffect(() => {
     if (!session?.user?.email) return;
 
@@ -158,12 +174,21 @@ export default function SilentZenithFullOSPage() {
     const localKey = `sz_workspace_v4_${user.id}`;
 
     const hydrateFromPayload = (parsed: any) => {
+      const hasExistingData =
+        parsed &&
+        typeof parsed === "object" &&
+        Object.keys(parsed).length > 0;
       const baseSettings = createInitialSettings(userEmail, displayName);
-      setSettings({
+      const mergedSettings: AppSettings = {
         ...baseSettings,
         ...(parsed?.settings || {}),
-        userEmail, // Selalu kunci email sesuai sesi login
-      });
+        userEmail,
+        onboardingCompleted: hasExistingData
+          ? parsed?.settings?.onboardingCompleted ?? true
+          : false,
+      };
+
+      setSettings(mergedSettings);
       setTrades(Array.isArray(parsed?.trades) ? parsed.trades : []);
       if (Array.isArray(parsed?.scenarios) && parsed.scenarios.length > 0) {
         setScenarios(parsed.scenarios);
@@ -182,12 +207,18 @@ export default function SilentZenithFullOSPage() {
                 date: isoToday,
                 type: "DEPOSIT",
                 description: "Modal Awal Akun Trading",
-                amountUsd: 100,
-                amountIdr: 1826900,
+                amountUsd: mergedSettings.initialCapitalUsd,
+                amountIdr:
+                  mergedSettings.initialCapitalUsd * mergedSettings.jisdorRate,
               },
             ]
       );
       setReviews(Array.isArray(parsed?.reviews) ? parsed.reviews : []);
+
+      if (!mergedSettings.onboardingCompleted) {
+        setCapitalModalMode("SETUP_TARGET");
+        setCapitalModalOpen(true);
+      }
     };
 
     const loadUserWorkspace = async () => {
@@ -217,7 +248,6 @@ export default function SilentZenithFullOSPage() {
     syncLiveEconomicNews();
   }, [session, syncLiveEconomicNews]);
 
-  // 3. Simpan Otomatis ke LocalStorage & Cloud Supabase per User
   useEffect(() => {
     if (!workspaceReady || !session?.user?.email) return;
 
@@ -273,29 +303,53 @@ export default function SilentZenithFullOSPage() {
     await supabase.auth.signOut();
   };
 
+  const additionalDepositsUsd = useMemo(
+    () =>
+      cashflows
+        .filter((c) => c.type === "DEPOSIT" && c.id !== "CF-INIT")
+        .reduce((s, c) => s + c.amountUsd, 0),
+    [cashflows]
+  );
+
+  const totalDeposited = Number(
+    (settings.initialCapitalUsd + additionalDepositsUsd).toFixed(2)
+  );
+
   const realizedPnl = useMemo(
     () =>
       trades.filter((t) => t.status !== "OPEN").reduce((s, t) => s + t.pnl, 0),
     [trades]
   );
+
   const totalWd = useMemo(
     () => withdrawals.reduce((s, w) => s + w.amountUsd, 0),
     [withdrawals]
   );
+
   const currentBalance = Number(
-    (settings.initialCapitalUsd + realizedPnl - totalWd).toFixed(2)
+    (totalDeposited + realizedPnl - totalWd).toFixed(2)
   );
+
   const highImpactCount = useMemo(
     () => events.filter((e) => e.impact === "High").length,
     [events]
   );
 
-  // Loading & Auth Gate
   if (authChecking) {
     return (
       <div className="min-h-screen bg-[#060911] text-slate-400 flex items-center justify-center text-xs font-mono">
         Memverifikasi sesi Silent Zenith OS...
       </div>
+    );
+  }
+
+  // Jika user membuka link reset password dari email
+  if (isPasswordRecovery) {
+    return (
+      <AuthGate
+        initialMode="RESET_PASSWORD"
+        onPasswordResetComplete={() => setIsPasswordRecovery(false)}
+      />
     );
   }
 
@@ -313,6 +367,110 @@ export default function SilentZenithFullOSPage() {
 
   const loggedInEmail = session.user.email.trim().toLowerCase();
   const isAdminUser = loggedInEmail === "kohanaminudin@gmail.com";
+
+  const handleSaveCapitalAndTarget = ({
+    initialCapitalUsd,
+    targetCapitalUsd,
+    riskPerTradePct,
+    dailyTargetPct,
+  }: {
+    initialCapitalUsd: number;
+    targetCapitalUsd: number;
+    riskPerTradePct: number;
+    dailyTargetPct: number;
+  }) => {
+    setSettings((prev) => ({
+      ...prev,
+      initialCapitalUsd,
+      targetCapitalUsd,
+      riskPerTradePct,
+      dailyTargetPct,
+      onboardingCompleted: true,
+    }));
+
+    setCashflows((prev) =>
+      prev.map((c) =>
+        c.id === "CF-INIT"
+          ? {
+              ...c,
+              amountUsd: initialCapitalUsd,
+              amountIdr: initialCapitalUsd * settings.jisdorRate,
+            }
+          : c
+      )
+    );
+
+    setScenarios((prev) =>
+      prev.map((sc) =>
+        sc.id === "SCN-DEFAULT"
+          ? {
+              ...sc,
+              initialUsd: initialCapitalUsd,
+              targetUsd: targetCapitalUsd,
+              returnPerCyclePct: dailyTargetPct,
+            }
+          : sc
+      )
+    );
+
+    if (settings.telegramEnabled && settings.telegramChatId.trim()) {
+      fetch("/api/telegram/notify-activity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId: settings.telegramChatId.trim(),
+          type: "TARGET_UPDATED",
+          payload: {
+            initialCapitalUsd,
+            targetCapitalUsd,
+            riskPct: riskPerTradePct,
+            targetPct: dailyTargetPct,
+          },
+        }),
+      }).catch(() => {});
+    }
+  };
+
+  const handleLogTopUpDeposit = ({
+    amountUsd,
+    date,
+    note,
+  }: {
+    amountUsd: number;
+    date: string;
+    note: string;
+  }) => {
+    const amountIdr = amountUsd * settings.jisdorRate;
+    setCashflows((prev) => [
+      {
+        id: `CF-TOPUP-${Date.now()}`,
+        date,
+        type: "DEPOSIT",
+        description: note,
+        amountUsd,
+        amountIdr,
+      },
+      ...prev,
+    ]);
+
+    if (settings.telegramEnabled && settings.telegramChatId.trim()) {
+      fetch("/api/telegram/notify-activity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId: settings.telegramChatId.trim(),
+          type: "DEPOSIT_LOGGED",
+          payload: {
+            amountUsd,
+            amountIdr,
+            totalDeposited: totalDeposited + amountUsd,
+            newBalance: currentBalance + amountUsd,
+            targetUsd: settings.targetCapitalUsd,
+          },
+        }),
+      }).catch(() => {});
+    }
+  };
 
   const handleAddTradeWithBotNotify = (t: TradeItem) => {
     setTrades((prev) => [t, ...prev]);
@@ -389,6 +547,18 @@ export default function SilentZenithFullOSPage() {
       highImpactCount={highImpactCount}
       onLogout={handleLogout}
     >
+      <CapitalTargetModal
+        isOpen={capitalModalOpen}
+        initialMode={capitalModalMode}
+        settings={settings}
+        currentBalance={currentBalance}
+        totalDeposited={totalDeposited}
+        todayStr={todayStr}
+        onClose={() => setCapitalModalOpen(false)}
+        onSaveCapitalAndTarget={handleSaveCapitalAndTarget}
+        onLogTopUpDeposit={handleLogTopUpDeposit}
+      />
+
       {latestAlertBanner && (
         <div className="mb-4 flex items-center justify-between rounded-xl border border-amber-500/40 bg-amber-500/15 px-4 py-3 text-xs text-amber-200 shadow-lg">
           <span className="font-semibold">🔔 {latestAlertBanner}</span>
@@ -404,15 +574,32 @@ export default function SilentZenithFullOSPage() {
 
       <PageTransitionShell tabKey={activeTab}>
         {activeTab === "dashboard" && (
-          <DashboardOverviewView
-            settings={settings}
-            trades={trades}
-            withdrawals={withdrawals}
-            budgets={budgets}
-            debts={debts}
-            events={events}
-            onNavigate={setActiveTab}
-          />
+          <>
+            <CapitalTargetBanner
+              settings={settings}
+              initialCapitalUsd={settings.initialCapitalUsd}
+              additionalDepositsUsd={additionalDepositsUsd}
+              currentBalance={currentBalance}
+              onOpenSetup={() => {
+                setCapitalModalMode("SETUP_TARGET");
+                setCapitalModalOpen(true);
+              }}
+              onOpenTopUp={() => {
+                setCapitalModalMode("TOPUP_DEPOSIT");
+                setCapitalModalOpen(true);
+              }}
+            />
+
+            <DashboardOverviewView
+              settings={settings}
+              trades={trades}
+              withdrawals={withdrawals}
+              budgets={budgets}
+              debts={debts}
+              events={events}
+              onNavigate={setActiveTab}
+            />
+          </>
         )}
 
         {activeTab === "assistant" && (
@@ -519,12 +706,31 @@ export default function SilentZenithFullOSPage() {
         )}
 
         {activeTab === "settings" && (
-          <SettingsModule
-            settings={settings}
-            onSaveSettings={(next) =>
-              setSettings({ ...next, userEmail: loggedInEmail })
-            }
-          />
+          <>
+            <CapitalTargetBanner
+              settings={settings}
+              initialCapitalUsd={settings.initialCapitalUsd}
+              additionalDepositsUsd={additionalDepositsUsd}
+              currentBalance={currentBalance}
+              onOpenSetup={() => {
+                setCapitalModalMode("SETUP_TARGET");
+                setCapitalModalOpen(true);
+              }}
+              onOpenTopUp={() => {
+                setCapitalModalMode("TOPUP_DEPOSIT");
+                setCapitalModalOpen(true);
+              }}
+            />
+
+            <SettingsModule
+              settings={settings}
+              onSaveSettings={(next) =>
+                setSettings({ ...next, userEmail: loggedInEmail })
+              }
+            />
+
+            <ChangePasswordCard userEmail={loggedInEmail} />
+          </>
         )}
 
         {activeTab === "admin" && isAdminUser && (

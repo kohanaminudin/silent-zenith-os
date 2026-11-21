@@ -59,6 +59,40 @@ export async function POST(req: NextRequest) {
         ``,
         `<i>Disiplin mengamankan profit adalah kunci compounding jangka panjang.</i>`,
       ].join("\n");
+    } else if (type === "DEPOSIT_LOGGED") {
+      message = [
+        `<b>💰 TOP-UP DEPOSIT MODAL TERCATAT</b>`,
+        ``,
+        `• <b>Nominal Deposit:</b> +$${Number(payload.amountUsd).toFixed(2)}`,
+        `• <b>Setara IDR:</b> Rp ${Number(payload.amountIdr).toLocaleString(
+          "id-ID"
+        )}`,
+        `• <b>Total Modal Disetor:</b> $${Number(
+          payload.totalDeposited
+        ).toFixed(2)}`,
+        `• <b>Balance Aktif Terbaru:</b> <b>$${Number(
+          payload.newBalance
+        ).toFixed(2)}</b>`,
+        `• <b>Target Utama:</b> $${Number(payload.targetUsd).toLocaleString(
+          "en-US"
+        )}`,
+        ``,
+        `<i>Modal tercatat di Arus Kas & kalkulator lot otomatis menyesuaikan.</i>`,
+      ].join("\n");
+    } else if (type === "TARGET_UPDATED") {
+      message = [
+        `<b>🎯 PARAMETER MODAL & TARGET DIPERBARUI</b>`,
+        ``,
+        `• <b>Modal Deposit Awal:</b> $${Number(
+          payload.initialCapitalUsd
+        ).toLocaleString("en-US", { minimumFractionDigits: 2 })}`,
+        `• <b>Target Saldo Akhir:</b> <b>$${Number(
+          payload.targetCapitalUsd
+        ).toLocaleString("en-US", { minimumFractionDigits: 2 })}</b>`,
+        `• <b>Aturan Risiko / Target Siklus:</b> ${payload.riskPct}% Risk / +${payload.targetPct}% Target`,
+        ``,
+        `<i>Asisten siap mengawal progres compounding Anda menuju target.</i>`,
+      ].join("\n");
     } else if (type === "DAILY_BRIEFING") {
       message = String(payload.message || "");
     } else {
