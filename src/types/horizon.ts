@@ -194,3 +194,10 @@ export interface AppSettings {
   quietHoursEnd: number;
   telegramEnabled: boolean;
 }
+export interface AssistantTask {
+  id: string;
+  title: string;
+  category: "SOP" | "RISK" | "MACRO" | "PERSONAL";
+  completed: boolean;
+  dueTime?: string;
+}

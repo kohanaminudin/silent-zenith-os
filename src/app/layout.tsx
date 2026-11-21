@@ -1,43 +1,19 @@
-import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata } from "next";
+import React from "react";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#09090B" },
-    { media: "(prefers-color-scheme: light)", color: "#FAFAFA" },
-  ],
-};
-
 export const metadata: Metadata = {
-  title: "Silent Zenith — Compounding OS",
+  title: "Silent Zenith — Compounding OS & Macro Terminal",
   description:
-    "Sistem manajemen risiko, jurnal eksekusi, dan proyeksi compounding dinamis lintas perangkat.",
-  manifest: "/manifest.json",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "black-translucent",
-    title: "Silent Zenith",
-  },
-  formatDetection: {
-    telephone: false,
-  },
+    "Trading Journal, Compounding Simulator, Macro Calendar & Personal Assistant OS",
 };
+
+const localFontVariables = {
+  "--font-geist-sans":
+    'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  "--font-geist-mono":
+    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+} as React.CSSProperties;
 
 export default function RootLayout({
   children,
@@ -45,10 +21,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="id" className="scroll-smooth">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-[100dvh] overflow-x-hidden bg-[#09090B]`}
-      >
+    <html lang="id" className="dark" style={localFontVariables}>
+      <body className="antialiased bg-[#060911] text-slate-100 font-sans">
         {children}
       </body>
     </html>
