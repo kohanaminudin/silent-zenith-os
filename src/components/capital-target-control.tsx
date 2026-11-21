@@ -218,8 +218,8 @@ export function CapitalTargetModal({
     e.preventDefault();
     const initVal = Math.max(1, parseFloat(depoAwal) || 100);
     const targVal = Math.max(initVal, parseFloat(targetAkhir) || 1000);
-    const rVal = Math.min(100, Math.max(0.1, parseFloat(riskPct) || 10));
-    const tVal = Math.min(500, Math.max(0.5, parseFloat(targetPct) || 20));
+    const rVal = Math.min(100, Math.max(0.01, parseFloat(riskPct) || 10));
+    const tVal = Math.min(500, Math.max(0.01, parseFloat(targetPct) || 20));
 
     onSaveCapitalAndTarget({
       initialCapitalUsd: initVal,
@@ -374,8 +374,8 @@ export function CapitalTargetModal({
                 </label>
                 <input
                   type="number"
-                  step="0.5"
-                  min="0.1"
+                  step="any"
+                  min="0.01"
                   max="100"
                   value={riskPct}
                   onChange={(e) => setRiskPct(e.target.value)}
@@ -389,8 +389,8 @@ export function CapitalTargetModal({
                 </label>
                 <input
                   type="number"
-                  step="0.5"
-                  min="0.5"
+                  step="any"
+                  min="0.01"
                   max="500"
                   value={targetPct}
                   onChange={(e) => setTargetPct(e.target.value)}
