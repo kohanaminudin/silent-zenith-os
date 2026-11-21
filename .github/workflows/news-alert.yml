@@ -1,0 +1,17 @@
+name: Silent Zenith Pre-News Alert (T-15m)
+
+on:
+  schedule:
+    # Berjalan otomatis setiap 5 menit (Senin - Jumat saat pasar aktif)
+    - cron: "*/5 * * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  trigger-news-alert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Silent Zenith Multi-User News Broadcaster
+        run: |
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron/news-alert"

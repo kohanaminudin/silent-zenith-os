@@ -14,6 +14,7 @@ import {
   WithdrawalPlanView,
 } from "@/components/finance-and-ops";
 import { PageTransitionShell } from "@/components/motion-primitives";
+import { useNewsAlertWatcher } from "@/lib/use-news-alert-watcher";
 import {
   AppSettings,
   BudgetItem,
@@ -120,12 +121,15 @@ export default function SilentZenithFullOSPage() {
     },
   ]);
 
-  // Live Economic News State
   const [events, setEvents] = useState<EconomicEvent[]>([]);
   const [isSyncingNews, setIsSyncingNews] = useState<boolean>(false);
   const [newsFeedStatus, setNewsFeedStatus] = useState<string>("Menunggu sync");
-
   const [reviews, setReviews] = useState<PeriodicReviewSnapshot[]>([]);
+
+  const { latestAlertBanner, dismissAlertBanner } = useNewsAlertWatcher({
+    events,
+    settings,
+  });
 
   const syncLiveEconomicNews = useCallback(async () => {
     setIsSyncingNews(true);
@@ -170,7 +174,6 @@ export default function SilentZenithFullOSPage() {
       }
     } catch {}
 
-    // Otomatis tarik jadwal berita ekonomi minggu ini
     syncLiveEconomicNews();
   }, [syncLiveEconomicNews]);
 
@@ -240,6 +243,19 @@ export default function SilentZenithFullOSPage() {
       isOwner={true}
       highImpactCount={highImpactCount}
     >
+      {latestAlertBanner && (
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-amber-500/40 bg-amber-500/15 px-4 py-3 text-xs text-amber-200 shadow-lg">
+          <span className="font-semibold">🔔 {latestAlertBanner}</span>
+          <button
+            type="button"
+            onClick={dismissAlertBanner}
+            className="ml-4 rounded px-2 py-0.5 text-amber-300 hover:bg-amber-500/20"
+          >
+            Tutup
+          </button>
+        </div>
+      )}
+
       <PageTransitionShell tabKey={activeTab}>
         {activeTab === "dashboard" && (
           <DashboardOverviewView

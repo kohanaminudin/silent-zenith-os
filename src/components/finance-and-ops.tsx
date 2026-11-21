@@ -44,7 +44,7 @@ import {
 } from "@/components/motion-primitives";
 
 /* ============================================================================
-   1. DASHBOARD OVERVIEW VIEW (Economist & Institutional Grade)
+   1. DASHBOARD OVERVIEW VIEW
 ============================================================================ */
 export function DashboardOverviewView({
   settings,
@@ -1207,7 +1207,7 @@ export function CalendarModule({
 }
 
 /* ============================================================================
-   5. REVIEW PERIODIK, TARGET PROJECT & PENGATURAN
+   5. REVIEW PERIODIK, TARGET PROJECT & PENGATURAN MULTI-USER TELEGRAM
 ============================================================================ */
 export function PeriodicReviewModule({
   snapshots,
@@ -1485,22 +1485,89 @@ export function SettingsModule({
   onSaveSettings: (next: AppSettings) => void;
 }) {
   const [form, setForm] = useState<AppSettings>(settings);
+  const [impactFilter, setImpactFilter] = useState<
+    "HIGH_ONLY" | "HIGH_AND_MEDIUM"
+  >("HIGH_ONLY");
   const [savedToast, setSavedToast] = useState(false);
+  const [syncingTele, setSyncingTele] = useState(false);
+  const [teleFeedback, setTeleFeedback] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
 
-  const handleSave = (e: React.FormEvent) => {
+  const syncSubscriptionToServer = async (
+    currentForm: AppSettings,
+    sendWelcome: boolean
+  ) => {
+    if (!currentForm.telegramChatId.trim() || !currentForm.userEmail.trim()) {
+      setTeleFeedback({
+        ok: false,
+        text: "Isi Email Akun dan Chat ID Telegram terlebih dahulu.",
+      });
+      return;
+    }
+
+    setSyncingTele(true);
+    setTeleFeedback(null);
+
+    try {
+      const res = await fetch("/api/telegram/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userEmail: currentForm.userEmail.trim(),
+          userName: currentForm.userName.trim(),
+          chatId: currentForm.telegramChatId.trim(),
+          isActive: currentForm.telegramEnabled,
+          impactFilter,
+          quietHoursStart: currentForm.quietHoursStart,
+          quietHoursEnd: currentForm.quietHoursEnd,
+          sendWelcome,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setTeleFeedback({
+          ok: false,
+          text: data.error || "Gagal mendaftarkan Chat ID ke server.",
+        });
+      } else {
+        onSaveSettings(currentForm);
+        setTeleFeedback({
+          ok: true,
+          text:
+            data.message ||
+            "Chat ID berhasil terdaftar! Bot akan memberi tahu 15 menit sebelum news.",
+        });
+      }
+    } catch {
+      setTeleFeedback({
+        ok: false,
+        text: "Koneksi ke server /api/telegram/subscribe gagal.",
+      });
+    } finally {
+      setSyncingTele(false);
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     onSaveSettings(form);
+    if (form.telegramChatId.trim() && form.userEmail.trim()) {
+      await syncSubscriptionToServer(form, false);
+    }
     setSavedToast(true);
     setTimeout(() => setSavedToast(false), 2500);
   };
 
   return (
     <form onSubmit={handleSave} className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white">Pengaturan</h1>
           <p className="text-sm text-slate-400 mt-1">
-            Profil, preferensi tampilan, integrasi, dan konfigurasi project.
+            Profil, preferensi tampilan, integrasi Telegram multi-user, dan konfigurasi project.
           </p>
         </div>
         <button
@@ -1532,12 +1599,15 @@ export function SettingsModule({
             />
           </div>
           <div>
-            <label className="block text-slate-400 mb-1">Email</label>
+            <label className="block text-slate-400 mb-1">
+              Email Akun (Identitas Subscriber Telegram)
+            </label>
             <input
               type="email"
               value={form.userEmail}
               onChange={(e) => setForm({ ...form, userEmail: e.target.value })}
               className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white"
+              required
             />
           </div>
           <div>
@@ -1553,11 +1623,49 @@ export function SettingsModule({
               className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white font-mono"
             />
           </div>
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <div>
+              <label className="block text-slate-400 mb-1">
+                Quiet Hours Mulai (Jam WIB)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                value={form.quietHoursStart}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    quietHoursStart: Number(e.target.value),
+                  })
+                }
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-400 mb-1">
+                Quiet Hours Selesai (Jam WIB)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                value={form.quietHoursEnd}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    quietHoursEnd: Number(e.target.value),
+                  })
+                }
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white font-mono"
+              />
+            </div>
+          </div>
         </div>
 
         <div className="rounded-xl border border-slate-800 bg-[#0E1424] p-5 space-y-3">
           <h2 className="text-base font-semibold text-white">
-            Project & Telegram
+            Project & Telegram Alert T-15 Menit
           </h2>
           <div>
             <label className="block text-slate-400 mb-1">Nama Project</label>
@@ -1600,22 +1708,81 @@ export function SettingsModule({
               />
             </div>
           </div>
-          <div>
-            <label className="block text-slate-400 mb-1">Chat ID Telegram</label>
-            <div className="flex gap-2">
+
+          <div className="pt-2 border-t border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-slate-300 font-medium">
+                Aktifkan Alert Otomatis 15 Menit Sebelum News
+              </label>
               <input
-                type="text"
-                placeholder="Masukkan Chat ID dari bot /id"
-                value={form.telegramChatId}
+                type="checkbox"
+                checked={form.telegramEnabled}
                 onChange={(e) =>
-                  setForm({ ...form, telegramChatId: e.target.value })
+                  setForm({ ...form, telegramEnabled: e.target.checked })
                 }
-                className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white"
+                className="h-4 w-4 rounded border-slate-600 bg-slate-800 text-indigo-500"
               />
-              <span className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-300">
-                <Send className="h-3.5 w-3.5 text-indigo-400" /> Bot Siap
-              </span>
             </div>
+
+            <div>
+              <label className="block text-slate-400 mb-1">
+                Filter Dampak Berita Ekonomi
+              </label>
+              <select
+                value={impactFilter}
+                onChange={(e) => setImpactFilter(e.target.value as any)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white"
+              >
+                <option value="HIGH_ONLY">
+                  High Impact Saja (NFP, CPI, FOMC, Rate Decision)
+                </option>
+                <option value="HIGH_AND_MEDIUM">
+                  High & Medium Impact (PMI, Retail Sales, Jobless Claims)
+                </option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-slate-400 mb-1">
+                Chat ID Telegram (Ketik /id di bot, atau /start email_anda)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Contoh: 1294819201"
+                  value={form.telegramChatId}
+                  onChange={(e) =>
+                    setForm({ ...form, telegramChatId: e.target.value })
+                  }
+                  className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const updated = { ...form, telegramEnabled: true };
+                    setForm(updated);
+                    syncSubscriptionToServer(updated, true);
+                  }}
+                  disabled={syncingTele}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50 px-3.5 py-2 font-semibold text-white transition"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  {syncingTele ? "Mendaftarkan..." : "Aktifkan & Tes"}
+                </button>
+              </div>
+            </div>
+
+            {teleFeedback && (
+              <div
+                className={`rounded-lg border px-3 py-2 text-[11px] ${
+                  teleFeedback.ok
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                }`}
+              >
+                {teleFeedback.text}
+              </div>
+            )}
           </div>
         </div>
       </div>
