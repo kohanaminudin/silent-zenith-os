@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { AppSidebarLayout, NavSectionId } from "@/components/app-sidebar";
 import { CompoundingAndMonteCarloView } from "@/components/compounding-monte-carlo";
 import { JournalAndAnalyticsModule } from "@/components/journal-and-analytics";
+import { AssistantHubModule } from "@/components/assistant-hub";
+import { AdminPanelModule } from "@/components/admin-panel";
 import {
   CalendarModule,
   DashboardOverviewView,
@@ -223,6 +225,61 @@ export default function SilentZenithFullOSPage() {
     [events]
   );
 
+  // Auto-kirim notifikasi ke Telegram saat mencatat trade baru
+  const handleAddTradeWithBotNotify = (t: TradeItem) => {
+    setTrades((prev) => [t, ...prev]);
+
+    if (settings.telegramEnabled && settings.telegramChatId.trim()) {
+      const projectedBalance =
+        t.status !== "OPEN" ? currentBalance + t.pnl : currentBalance;
+      fetch("/api/telegram/notify-activity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId: settings.telegramChatId.trim(),
+          type: "TRADE_LOGGED",
+          payload: {
+            ...t,
+            newBalance: projectedBalance,
+          },
+        }),
+      }).catch(() => {});
+    }
+  };
+
+  // Auto-kirim notifikasi ke Telegram saat mencatat WD profit
+  const handleAddWithdrawalWithBotNotify = (wd: WithdrawalRecord) => {
+    setWithdrawals((prev) => [wd, ...prev]);
+    setCashflows((prev) => [
+      {
+        id: `CF-WD-${Date.now()}`,
+        date: wd.date,
+        type: "WITHDRAWAL",
+        description: wd.note,
+        amountUsd: wd.amountUsd,
+        amountIdr: wd.amountUsd * wd.rateIdr,
+      },
+      ...prev,
+    ]);
+
+    if (settings.telegramEnabled && settings.telegramChatId.trim()) {
+      fetch("/api/telegram/notify-activity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId: settings.telegramChatId.trim(),
+          type: "WITHDRAWAL_LOGGED",
+          payload: {
+            amountUsd: wd.amountUsd,
+            amountIdr: wd.amountUsd * wd.rateIdr,
+            date: wd.date,
+            newBalance: Math.max(0, currentBalance - wd.amountUsd),
+          },
+        }),
+      }).catch(() => {});
+    }
+  };
+
   const handleImportTrades = (incoming: TradeItem[]) => {
     const existingIds = new Set(trades.map((t) => t.id));
     const uniqueNew = incoming.filter((item) => !existingIds.has(item.id));
@@ -232,6 +289,9 @@ export default function SilentZenithFullOSPage() {
     return uniqueNew.length;
   };
 
+  const isAdminUser =
+    settings.userEmail.trim().toLowerCase() === "kohanaminudin@gmail.com";
+
   return (
     <AppSidebarLayout
       activeTab={activeTab}
@@ -240,7 +300,7 @@ export default function SilentZenithFullOSPage() {
       currentBalance={currentBalance}
       targetBalance={settings.targetCapitalUsd}
       userName={settings.userName}
-      isOwner={true}
+      isOwner={isAdminUser}
       highImpactCount={highImpactCount}
     >
       {latestAlertBanner && (
@@ -269,13 +329,23 @@ export default function SilentZenithFullOSPage() {
           />
         )}
 
+        {activeTab === "assistant" && (
+          <AssistantHubModule
+            settings={settings}
+            currentBalance={currentBalance}
+            trades={trades}
+            events={events}
+            todayStr={todayStr}
+          />
+        )}
+
         {(activeTab === "journal" || activeTab === "analytics") && (
           <JournalAndAnalyticsModule
             mode={activeTab}
             trades={trades}
             currentBalance={currentBalance}
             todayStr={todayStr}
-            onAddTrade={(t) => setTrades((prev) => [t, ...prev])}
+            onAddTrade={handleAddTradeWithBotNotify}
             onImportTrades={handleImportTrades}
             onDeleteTrade={(id) =>
               setTrades((prev) => prev.filter((item) => item.id !== id))
@@ -299,20 +369,7 @@ export default function SilentZenithFullOSPage() {
             withdrawals={withdrawals}
             budgets={budgets}
             todayStr={todayStr}
-            onAddWithdrawal={(wd) => {
-              setWithdrawals((prev) => [wd, ...prev]);
-              setCashflows((prev) => [
-                {
-                  id: `CF-WD-${Date.now()}`,
-                  date: wd.date,
-                  type: "WITHDRAWAL",
-                  description: wd.note,
-                  amountUsd: wd.amountUsd,
-                  amountIdr: wd.amountUsd * wd.rateIdr,
-                },
-                ...prev,
-              ]);
-            }}
+            onAddWithdrawal={handleAddWithdrawalWithBotNotify}
             onUpdateRules={(capRatioPct, reserveUsd) =>
               setSettings((prev) => ({
                 ...prev,
@@ -377,6 +434,10 @@ export default function SilentZenithFullOSPage() {
 
         {activeTab === "settings" && (
           <SettingsModule settings={settings} onSaveSettings={setSettings} />
+        )}
+
+        {activeTab === "admin" && isAdminUser && (
+          <AdminPanelModule adminEmail={settings.userEmail} />
         )}
       </PageTransitionShell>
     </AppSidebarLayout>
