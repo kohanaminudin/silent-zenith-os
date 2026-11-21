@@ -1,25 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
-function isAuthorizedAdmin(email?: string | null): boolean {
-  if (!email) return false;
-  const rawList =
-    process.env.ADMIN_EMAILS || "kohanaminudin@gmail.com";
+async function verifyAdminFromRequest(req: NextRequest): Promise<string | null> {
+  const authHeader = req.headers.get("authorization") || "";
+  const token = authHeader.startsWith("Bearer ")
+    ? authHeader.slice(7).trim()
+    : "";
+
+  if (!token) return null;
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user?.email) return null;
+
+  const userEmail = data.user.email.trim().toLowerCase();
+  const rawList = process.env.ADMIN_EMAILS || "kohanaminudin@gmail.com";
   const allowed = rawList
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  return allowed.includes(email.trim().toLowerCase());
+
+  return allowed.includes(userEmail) ? userEmail : null;
 }
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const adminEmail = searchParams.get("adminEmail");
+    const verifiedAdminEmail = await verifyAdminFromRequest(req);
 
-    if (!isAuthorizedAdmin(adminEmail)) {
+    if (!verifiedAdminEmail) {
       return NextResponse.json(
-        { ok: false, error: "Akses ditolak. Bukan akun Admin." },
+        { ok: false, error: "Akses ditolak. Sesi Anda bukan akun Admin." },
         { status: 403 }
       );
     }
@@ -62,16 +72,16 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const adminEmail = String(body.adminEmail || "").trim();
+    const verifiedAdminEmail = await verifyAdminFromRequest(req);
 
-    if (!isAuthorizedAdmin(adminEmail)) {
+    if (!verifiedAdminEmail) {
       return NextResponse.json(
-        { ok: false, error: "Akses ditolak. Bukan akun Admin." },
+        { ok: false, error: "Akses ditolak. Sesi Anda bukan akun Admin." },
         { status: 403 }
       );
     }
 
+    const body = await req.json();
     const supabase = getSupabaseAdmin();
     const action = String(body.action || "");
 
@@ -79,7 +89,10 @@ export async function POST(req: NextRequest) {
       const { id, isActive } = body;
       const { error } = await supabase
         .from("telegram_subscribers")
-        .update({ is_active: Boolean(isActive), updated_at: new Date().toISOString() })
+        .update({
+          is_active: Boolean(isActive),
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", id);
 
       if (error) throw new Error(error.message);
@@ -90,7 +103,10 @@ export async function POST(req: NextRequest) {
       const { id, impactFilter } = body;
       const { error } = await supabase
         .from("telegram_subscribers")
-        .update({ impact_filter: impactFilter, updated_at: new Date().toISOString() })
+        .update({
+          impact_filter: impactFilter,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", id);
 
       if (error) throw new Error(error.message);
@@ -163,7 +179,7 @@ export async function POST(req: NextRequest) {
       );
 
       await supabase.from("admin_broadcast_logs").insert({
-        admin_email: adminEmail,
+        admin_email: verifiedAdminEmail,
         title,
         message,
         recipients_count: delivered,

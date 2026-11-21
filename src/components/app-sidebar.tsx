@@ -16,6 +16,7 @@ import {
   Settings,
   Bot,
   ShieldAlert,
+  LogOut,
   Menu,
   X,
 } from "lucide-react";
@@ -43,8 +44,10 @@ export function AppSidebarLayout({
   currentBalance,
   targetBalance,
   userName,
+  userEmail,
   isOwner,
   highImpactCount,
+  onLogout,
   children,
 }: {
   activeTab: NavSectionId;
@@ -53,8 +56,10 @@ export function AppSidebarLayout({
   currentBalance: number;
   targetBalance: number;
   userName: string;
+  userEmail: string;
   isOwner: boolean;
   highImpactCount: number;
+  onLogout: () => void;
   children: React.ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -179,7 +184,6 @@ export function AppSidebarLayout({
   const sidebarContent = (
     <div className="flex h-full flex-col justify-between bg-[#090D16] border-r border-slate-800/90 p-4">
       <div className="space-y-5 overflow-y-auto pr-1">
-        {/* Brand */}
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-bold tracking-wider uppercase text-white">
@@ -198,7 +202,6 @@ export function AppSidebarLayout({
           </button>
         </div>
 
-        {/* Mini Equity Tracker */}
         <div className="rounded-xl border border-slate-800 bg-[#0E1424] p-3">
           <div className="flex justify-between text-[11px] text-slate-400">
             <span>Balance Aktif</span>
@@ -217,7 +220,6 @@ export function AppSidebarLayout({
           </div>
         </div>
 
-        {/* Nav Groups */}
         <nav className="space-y-4">
           {navGroups.map((g) => (
             <div key={g.group}>
@@ -259,24 +261,44 @@ export function AppSidebarLayout({
         </nav>
       </div>
 
-      {/* Footer User */}
-      <div className="pt-3 border-t border-slate-800/80 text-xs">
-        <div className="font-semibold text-white truncate">{userName}</div>
-        <div className="text-[11px] text-emerald-400">
-          ● Co-Pilot & Telegram Sync Ready
+      {/* Footer Akun Login & Tombol Keluar */}
+      <div className="pt-3 border-t border-slate-800/80 space-y-2.5">
+        <div>
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-xs font-semibold text-white truncate">
+              {userName}
+            </span>
+            <span
+              className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${
+                isOwner
+                  ? "bg-amber-500/20 text-amber-300"
+                  : "bg-indigo-500/20 text-indigo-300"
+              }`}
+            >
+              {isOwner ? "ADMIN" : "MEMBER"}
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-400 truncate">{userEmail}</div>
         </div>
+
+        <button
+          type="button"
+          onClick={onLogout}
+          className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 hover:bg-rose-500/15 hover:border-rose-500/40 hover:text-rose-300 py-1.5 text-[11px] font-semibold text-slate-300 transition"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+          Keluar (Logout)
+        </button>
       </div>
     </div>
   );
 
   return (
     <div className="min-h-screen bg-[#060911] text-slate-100 flex">
-      {/* Desktop Sidebar */}
       <aside className="hidden lg:block w-64 shrink-0 sticky top-0 h-screen">
         {sidebarContent}
       </aside>
 
-      {/* Mobile Drawer */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div className="w-64 h-full">{sidebarContent}</div>
@@ -287,7 +309,6 @@ export function AppSidebarLayout({
         </div>
       )}
 
-      {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
         <header className="lg:hidden flex items-center justify-between border-b border-slate-800 bg-[#090D16] px-4 py-3">
           <button

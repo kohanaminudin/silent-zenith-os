@@ -42,14 +42,19 @@ interface BroadcastLogItem {
   created_at: string;
 }
 
-export function AdminPanelModule({ adminEmail }: { adminEmail: string }) {
+export function AdminPanelModule({
+  adminEmail,
+  accessToken,
+}: {
+  adminEmail: string;
+  accessToken: string;
+}) {
   const [subscribers, setSubscribers] = useState<SubscriberItem[]>([]);
   const [recentLogs, setRecentLogs] = useState<AlertLogItem[]>([]);
   const [broadcasts, setBroadcasts] = useState<BroadcastLogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Broadcast form
   const [bcTitle, setBcTitle] = useState("MARKET & SYSTEM UPDATE");
   const [bcMessage, setBcMessage] = useState("");
   const [sendingBc, setSendingBc] = useState(false);
@@ -60,10 +65,12 @@ export function AdminPanelModule({ adminEmail }: { adminEmail: string }) {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch(
-        `/api/admin/overview?adminEmail=${encodeURIComponent(adminEmail)}`,
-        { cache: "no-store" }
-      );
+      const res = await fetch("/api/admin/overview", {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
       const data = await res.json();
       if (!res.ok || !data.ok) {
         setErrorMsg(data.error || "Gagal memuat data Admin Panel.");
@@ -77,22 +84,28 @@ export function AdminPanelModule({ adminEmail }: { adminEmail: string }) {
     } finally {
       setLoading(false);
     }
-  }, [adminEmail]);
+  }, [accessToken]);
 
   useEffect(() => {
-    loadAdminData();
-  }, [loadAdminData]);
+    if (accessToken) loadAdminData();
+  }, [accessToken, loadAdminData]);
+
+  const postAdminAction = async (payload: Record<string, any>) => {
+    return fetch("/api/admin/overview", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+  };
 
   const handleToggleUser = async (sub: SubscriberItem) => {
-    await fetch("/api/admin/overview", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        adminEmail,
-        action: "TOGGLE_SUBSCRIBER",
-        id: sub.id,
-        isActive: !sub.is_active,
-      }),
+    await postAdminAction({
+      action: "TOGGLE_SUBSCRIBER",
+      id: sub.id,
+      isActive: !sub.is_active,
     });
     loadAdminData();
   };
@@ -101,28 +114,18 @@ export function AdminPanelModule({ adminEmail }: { adminEmail: string }) {
     sub: SubscriberItem,
     impactFilter: "HIGH_ONLY" | "HIGH_AND_MEDIUM"
   ) => {
-    await fetch("/api/admin/overview", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        adminEmail,
-        action: "UPDATE_FILTER",
-        id: sub.id,
-        impactFilter,
-      }),
+    await postAdminAction({
+      action: "UPDATE_FILTER",
+      id: sub.id,
+      impactFilter,
     });
     loadAdminData();
   };
 
   const handleDeleteUser = async (id: string) => {
-    await fetch("/api/admin/overview", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        adminEmail,
-        action: "DELETE_SUBSCRIBER",
-        id,
-      }),
+    await postAdminAction({
+      action: "DELETE_SUBSCRIBER",
+      id,
     });
     loadAdminData();
   };
@@ -133,15 +136,10 @@ export function AdminPanelModule({ adminEmail }: { adminEmail: string }) {
     setSendingBc(true);
     setBcStatus(null);
     try {
-      const res = await fetch("/api/admin/overview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          adminEmail,
-          action: "BROADCAST_MESSAGE",
-          title: bcTitle,
-          message: bcMessage,
-        }),
+      const res = await postAdminAction({
+        action: "BROADCAST_MESSAGE",
+        title: bcTitle,
+        message: bcMessage,
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
@@ -227,7 +225,6 @@ export function AdminPanelModule({ adminEmail }: { adminEmail: string }) {
         </div>
       )}
 
-      {/* KPI Admin */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border border-slate-800 bg-[#0E1424] p-5">
           <div className="flex items-center justify-between text-xs text-slate-400">
@@ -269,7 +266,6 @@ export function AdminPanelModule({ adminEmail }: { adminEmail: string }) {
         </div>
       </div>
 
-      {/* Tabel Manajemen Member & Telegram Subscribers */}
       <div className="rounded-xl border border-slate-800 bg-[#0E1424] overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
           <h2 className="text-sm font-bold text-white">
@@ -344,7 +340,6 @@ export function AdminPanelModule({ adminEmail }: { adminEmail: string }) {
                       <button
                         type="button"
                         onClick={() => handleToggleUser(sub)}
-                        title="Aktifkan / Matikan Alert User"
                         className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 hover:bg-slate-800 px-2 py-1 text-[11px] text-slate-200"
                       >
                         <Power className="h-3 w-3" />
@@ -353,7 +348,6 @@ export function AdminPanelModule({ adminEmail }: { adminEmail: string }) {
                       <button
                         type="button"
                         onClick={() => handleDeleteUser(sub.id)}
-                        title="Hapus Subscriber"
                         className="inline-flex items-center rounded border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 p-1.5 text-rose-300"
                       >
                         <Trash2 className="h-3 w-3" />
@@ -367,7 +361,6 @@ export function AdminPanelModule({ adminEmail }: { adminEmail: string }) {
         </div>
       </div>
 
-      {/* Global Telegram Broadcast + Log Pengiriman */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <form
           onSubmit={handleSendBroadcast}

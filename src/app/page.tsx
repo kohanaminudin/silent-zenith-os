@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
 import { AppSidebarLayout, NavSectionId } from "@/components/app-sidebar";
 import { CompoundingAndMonteCarloView } from "@/components/compounding-monte-carlo";
 import { JournalAndAnalyticsModule } from "@/components/journal-and-analytics";
 import { AssistantHubModule } from "@/components/assistant-hub";
 import { AdminPanelModule } from "@/components/admin-panel";
+import { AuthGate } from "@/components/auth-gate";
 import {
   CalendarModule,
   DashboardOverviewView,
@@ -17,6 +19,7 @@ import {
 } from "@/components/finance-and-ops";
 import { PageTransitionShell } from "@/components/motion-primitives";
 import { useNewsAlertWatcher } from "@/lib/use-news-alert-watcher";
+import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import {
   AppSettings,
   BudgetItem,
@@ -29,59 +32,37 @@ import {
   WithdrawalRecord,
 } from "@/types/horizon";
 
-const DEFAULT_SETTINGS: AppSettings = {
-  projectName: "Silent Zenith",
-  initialCapitalUsd: 100,
-  targetCapitalUsd: 1000000,
-  userName: "Kohan Aminudin",
-  userEmail: "kohanaminudin@gmail.com",
-  timezone: "Asia/Jakarta (WIB)",
-  language: "Bahasa Indonesia",
-  jisdorRate: 18269,
-  wdCapRatioPct: 50,
-  cashReserveUsd: 100,
-  telegramChatId: "",
-  quietHoursStart: 22,
-  quietHoursEnd: 7,
-  telegramEnabled: false,
-};
+function createInitialSettings(email: string, name: string): AppSettings {
+  return {
+    projectName: "Silent Zenith",
+    initialCapitalUsd: 100,
+    targetCapitalUsd: 1000000,
+    userName: name || email.split("@")[0],
+    userEmail: email,
+    timezone: "Asia/Jakarta (WIB)",
+    language: "Bahasa Indonesia",
+    jisdorRate: 18269,
+    wdCapRatioPct: 50,
+    cashReserveUsd: 100,
+    telegramChatId: "",
+    quietHoursStart: 22,
+    quietHoursEnd: 7,
+    telegramEnabled: false,
+  };
+}
 
 export default function SilentZenithFullOSPage() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
+  const [workspaceReady, setWorkspaceReady] = useState<boolean>(false);
+
   const [activeTab, setActiveTab] = useState<NavSectionId>("dashboard");
   const [todayStr, setTodayStr] = useState<string>("");
 
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [trades, setTrades] = useState<TradeItem[]>([
-    {
-      id: "TRD-INIT-01",
-      date: "2026-11-16",
-      account: "Akun Utama (USD)",
-      pair: "XAUUSD",
-      direction: "Buy (Long)",
-      lot: 0.1,
-      entry: 2612.5,
-      sl: 2605.0,
-      tp: 2628.0,
-      exit: 2628.0,
-      commission: 0,
-      rMultiple: 2.07,
-      pnl: 87.27,
-      status: "WIN",
-      session: "London-NY Overlap",
-      timeframe: "M15/H1",
-      setup: "ICT Liquidity Sweep + Engulfing",
-      marketContext: "HTF Bullish BOS + SSL Sweep sesi London",
-      notes: "Eksekusi disiplin sesuai SOP",
-      checklist: {
-        plan: true,
-        slSet: true,
-        rrMin: true,
-        noNews: true,
-        calmMind: true,
-      },
-    },
-  ]);
-
+  const [settings, setSettings] = useState<AppSettings>(() =>
+    createInitialSettings("", "")
+  );
+  const [trades, setTrades] = useState<TradeItem[]>([]);
   const [scenarios, setScenarios] = useState<SavedCompoundingScenario[]>([
     {
       id: "SCN-DEFAULT",
@@ -95,7 +76,6 @@ export default function SilentZenithFullOSPage() {
       feePerCycle: 0,
     },
   ]);
-
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [budgets, setBudgets] = useState<BudgetItem[]>([
     {
@@ -104,25 +84,9 @@ export default function SilentZenithFullOSPage() {
       amountIdr: 500000,
       active: true,
     },
-    {
-      id: "B-2",
-      category: "Kebutuhan Operasional Bulanan",
-      amountIdr: 2000000,
-      active: true,
-    },
   ]);
   const [debts, setDebts] = useState<DebtItem[]>([]);
-  const [cashflows, setCashflows] = useState<CashflowEntry[]>([
-    {
-      id: "CF-1",
-      date: "2026-11-16",
-      type: "DEPOSIT",
-      description: "Modal Awal Akun Trading",
-      amountUsd: 100,
-      amountIdr: 1826900,
-    },
-  ]);
-
+  const [cashflows, setCashflows] = useState<CashflowEntry[]>([]);
   const [events, setEvents] = useState<EconomicEvent[]>([]);
   const [isSyncingNews, setIsSyncingNews] = useState<boolean>(false);
   const [newsFeedStatus, setNewsFeedStatus] = useState<string>("Menunggu sync");
@@ -132,6 +96,29 @@ export default function SilentZenithFullOSPage() {
     events,
     settings,
   });
+
+  // 1. Cek Sesi Login Supabase
+  useEffect(() => {
+    const supabase = getSupabaseBrowser();
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthChecking(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthChecking(false);
+      if (!nextSession) {
+        setWorkspaceReady(false);
+        setActiveTab("dashboard");
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   const syncLiveEconomicNews = useCallback(async () => {
     setIsSyncingNews(true);
@@ -157,47 +144,120 @@ export default function SilentZenithFullOSPage() {
     }
   }, []);
 
+  // 2. Muat Workspace Terisolasi Khusus User yang Sedang Login
   useEffect(() => {
+    if (!session?.user?.email) return;
+
     const isoToday = new Date().toISOString().split("T")[0];
     setTodayStr(isoToday);
 
-    try {
-      const raw = localStorage.getItem("silent_zenith_horizon_v3");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed.settings) setSettings(parsed.settings);
-        if (parsed.trades) setTrades(parsed.trades);
-        if (parsed.scenarios) setScenarios(parsed.scenarios);
-        if (parsed.withdrawals) setWithdrawals(parsed.withdrawals);
-        if (parsed.budgets) setBudgets(parsed.budgets);
-        if (parsed.debts) setDebts(parsed.debts);
-        if (parsed.cashflows) setCashflows(parsed.cashflows);
-        if (parsed.reviews) setReviews(parsed.reviews);
+    const user = session.user;
+    const userEmail = user.email!.toLowerCase();
+    const displayName =
+      (user.user_metadata?.full_name as string) || userEmail.split("@")[0];
+    const localKey = `sz_workspace_v4_${user.id}`;
+
+    const hydrateFromPayload = (parsed: any) => {
+      const baseSettings = createInitialSettings(userEmail, displayName);
+      setSettings({
+        ...baseSettings,
+        ...(parsed?.settings || {}),
+        userEmail, // Selalu kunci email sesuai sesi login
+      });
+      setTrades(Array.isArray(parsed?.trades) ? parsed.trades : []);
+      if (Array.isArray(parsed?.scenarios) && parsed.scenarios.length > 0) {
+        setScenarios(parsed.scenarios);
       }
-    } catch {}
-
-    syncLiveEconomicNews();
-  }, [syncLiveEconomicNews]);
-
-  useEffect(() => {
-    if (!todayStr) return;
-    try {
-      localStorage.setItem(
-        "silent_zenith_horizon_v3",
-        JSON.stringify({
-          settings,
-          trades,
-          scenarios,
-          withdrawals,
-          budgets,
-          debts,
-          cashflows,
-          reviews,
-        })
+      setWithdrawals(
+        Array.isArray(parsed?.withdrawals) ? parsed.withdrawals : []
       );
+      if (Array.isArray(parsed?.budgets)) setBudgets(parsed.budgets);
+      setDebts(Array.isArray(parsed?.debts) ? parsed.debts : []);
+      setCashflows(
+        Array.isArray(parsed?.cashflows)
+          ? parsed.cashflows
+          : [
+              {
+                id: "CF-INIT",
+                date: isoToday,
+                type: "DEPOSIT",
+                description: "Modal Awal Akun Trading",
+                amountUsd: 100,
+                amountIdr: 1826900,
+              },
+            ]
+      );
+      setReviews(Array.isArray(parsed?.reviews) ? parsed.reviews : []);
+    };
+
+    const loadUserWorkspace = async () => {
+      try {
+        const supabase = getSupabaseBrowser();
+        const { data } = await supabase
+          .from("user_workspaces")
+          .select("payload")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        if (data?.payload && Object.keys(data.payload).length > 0) {
+          hydrateFromPayload(data.payload);
+        } else {
+          const rawLocal = localStorage.getItem(localKey);
+          hydrateFromPayload(rawLocal ? JSON.parse(rawLocal) : {});
+        }
+      } catch {
+        const rawLocal = localStorage.getItem(localKey);
+        hydrateFromPayload(rawLocal ? JSON.parse(rawLocal) : {});
+      } finally {
+        setWorkspaceReady(true);
+      }
+    };
+
+    loadUserWorkspace();
+    syncLiveEconomicNews();
+  }, [session, syncLiveEconomicNews]);
+
+  // 3. Simpan Otomatis ke LocalStorage & Cloud Supabase per User
+  useEffect(() => {
+    if (!workspaceReady || !session?.user?.email) return;
+
+    const user = session.user;
+    const localKey = `sz_workspace_v4_${user.id}`;
+    const payload = {
+      settings: { ...settings, userEmail: user.email!.toLowerCase() },
+      trades,
+      scenarios,
+      withdrawals,
+      budgets,
+      debts,
+      cashflows,
+      reviews,
+    };
+
+    try {
+      localStorage.setItem(localKey, JSON.stringify(payload));
     } catch {}
+
+    const timer = setTimeout(() => {
+      const supabase = getSupabaseBrowser();
+      supabase
+        .from("user_workspaces")
+        .upsert(
+          {
+            user_id: user.id,
+            user_email: user.email!.toLowerCase(),
+            payload,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        )
+        .then(() => {});
+    }, 1000);
+
+    return () => clearTimeout(timer);
   }, [
-    todayStr,
+    workspaceReady,
+    session,
     settings,
     trades,
     scenarios,
@@ -207,6 +267,11 @@ export default function SilentZenithFullOSPage() {
     cashflows,
     reviews,
   ]);
+
+  const handleLogout = async () => {
+    const supabase = getSupabaseBrowser();
+    await supabase.auth.signOut();
+  };
 
   const realizedPnl = useMemo(
     () =>
@@ -225,7 +290,30 @@ export default function SilentZenithFullOSPage() {
     [events]
   );
 
-  // Auto-kirim notifikasi ke Telegram saat mencatat trade baru
+  // Loading & Auth Gate
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-[#060911] text-slate-400 flex items-center justify-center text-xs font-mono">
+        Memverifikasi sesi Silent Zenith OS...
+      </div>
+    );
+  }
+
+  if (!session?.user?.email) {
+    return <AuthGate />;
+  }
+
+  if (!workspaceReady) {
+    return (
+      <div className="min-h-screen bg-[#060911] text-slate-400 flex items-center justify-center text-xs font-mono">
+        Memuat workspace pribadi {session.user.email}...
+      </div>
+    );
+  }
+
+  const loggedInEmail = session.user.email.trim().toLowerCase();
+  const isAdminUser = loggedInEmail === "kohanaminudin@gmail.com";
+
   const handleAddTradeWithBotNotify = (t: TradeItem) => {
     setTrades((prev) => [t, ...prev]);
 
@@ -247,7 +335,6 @@ export default function SilentZenithFullOSPage() {
     }
   };
 
-  // Auto-kirim notifikasi ke Telegram saat mencatat WD profit
   const handleAddWithdrawalWithBotNotify = (wd: WithdrawalRecord) => {
     setWithdrawals((prev) => [wd, ...prev]);
     setCashflows((prev) => [
@@ -289,9 +376,6 @@ export default function SilentZenithFullOSPage() {
     return uniqueNew.length;
   };
 
-  const isAdminUser =
-    settings.userEmail.trim().toLowerCase() === "kohanaminudin@gmail.com";
-
   return (
     <AppSidebarLayout
       activeTab={activeTab}
@@ -300,8 +384,10 @@ export default function SilentZenithFullOSPage() {
       currentBalance={currentBalance}
       targetBalance={settings.targetCapitalUsd}
       userName={settings.userName}
+      userEmail={loggedInEmail}
       isOwner={isAdminUser}
       highImpactCount={highImpactCount}
+      onLogout={handleLogout}
     >
       {latestAlertBanner && (
         <div className="mb-4 flex items-center justify-between rounded-xl border border-amber-500/40 bg-amber-500/15 px-4 py-3 text-xs text-amber-200 shadow-lg">
@@ -433,11 +519,19 @@ export default function SilentZenithFullOSPage() {
         )}
 
         {activeTab === "settings" && (
-          <SettingsModule settings={settings} onSaveSettings={setSettings} />
+          <SettingsModule
+            settings={settings}
+            onSaveSettings={(next) =>
+              setSettings({ ...next, userEmail: loggedInEmail })
+            }
+          />
         )}
 
         {activeTab === "admin" && isAdminUser && (
-          <AdminPanelModule adminEmail={settings.userEmail} />
+          <AdminPanelModule
+            adminEmail={loggedInEmail}
+            accessToken={session.access_token}
+          />
         )}
       </PageTransitionShell>
     </AppSidebarLayout>
